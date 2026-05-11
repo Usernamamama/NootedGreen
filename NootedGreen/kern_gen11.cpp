@@ -314,46 +314,47 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 		
 		if (wegCoexist) {
 			RouteRequestPlus requests[] = {
-				// Keep stock ReadRegister32 while stabilizing display pipeline behavior.
+			// Keep stock ReadRegister32 while stabilizing display pipeline behavior.
 			//		{"__ZN31AppleIntelFramebufferController14ReadRegister32Em",wrapReadRegister32,	this->owrapReadRegister32},
 			//		{"__ZN21AppleIntelFramebuffer13SaveNVRAMModeEv",handleLinkIntegrityCheck},
-				// Keep stock wake/sleep lifecycle handlers to avoid broken restore paths.
-				//{"__ZN21AppleIntelFramebuffer18prepareToEnterWakeEv",dovoid},
-				//{"__ZN21AppleIntelFramebuffer17prepareToExitWakeEv",dovoid},
-				//{"__ZN21AppleIntelFramebuffer18prepareToExitSleepEv",dovoid},
-				//{"__ZN21AppleIntelFramebuffer19prepareToEnterSleepEv",dovoid},
-				// Keep stock doAttribute while chasing UI stalls / high WindowServer CPU.
+			// Keep stock wake/sleep lifecycle handlers to avoid broken restore paths.
+			//{"__ZN21AppleIntelFramebuffer18prepareToEnterWakeEv",dovoid},
+			//{"__ZN21AppleIntelFramebuffer17prepareToExitWakeEv",dovoid},
+			//{"__ZN21AppleIntelFramebuffer18prepareToExitSleepEv",dovoid},
+			//{"__ZN21AppleIntelFramebuffer19prepareToEnterSleepEv",dovoid},
+			// Keep stock doAttribute while chasing UI stalls / high WindowServer CPU.
 			//		{"__ZN20IntelFBClientControl11doAttributeEjPmmS0_S0_P25IOExternalMethodArguments",wrapFBClientDoAttribute,	this->orgFBClientDoAttribute},
-				//ADDED
+			//ADDED
 			//{"__ZN21AppleIntelFramebuffer4initEP31AppleIntelFramebufferControllerj",AppleIntelFramebufferinit, this->oAppleIntelFramebufferinit},
 			//		{"__ZN31AppleIntelFramebufferController10hwShutdownEP21AppleIntelFramebuffer",handleLinkIntegrityCheck},
-					{"__ZN31AppleIntelFramebufferController18hwInitializeCStateEv",hwInitializeCState, this->ohwInitializeCState},
+				{"__ZN31AppleIntelFramebufferController18hwInitializeCStateEv",hwInitializeCState, this->ohwInitializeCState},
 			//		{"__ZN31AppleIntelFramebufferController20hwConfigureCustomAUXEb",hwConfigureCustomAUX, this->ohwConfigureCustomAUX},
 			//	{"__ZN31AppleIntelFramebufferController21probeCDClockFrequencyEv",wrapProbeCDClockFrequency,	this->orgProbeCDClockFrequency},
 			};
 			PANIC_COND(!RouteRequestPlus::routeAll(patcher, index, requests, address, size), "nblue","Failed to route symbols");
 		} else {
 			RouteRequestPlus requests[] = {
-				// Keep stock ReadRegister32 while stabilizing display pipeline behavior.
+			// Keep stock ReadRegister32 while stabilizing display pipeline behavior.
 			//		{"__ZN31AppleIntelFramebufferController14ReadRegister32Em",wrapReadRegister32,	this->owrapReadRegister32},
 			//		{"__ZN21AppleIntelFramebuffer13SaveNVRAMModeEv",handleLinkIntegrityCheck},
-				// Keep stock wake/sleep lifecycle handlers to avoid broken restore paths.
-				//{"__ZN21AppleIntelFramebuffer18prepareToEnterWakeEv",dovoid},
-				//{"__ZN21AppleIntelFramebuffer17prepareToExitWakeEv",dovoid},
-				//{"__ZN21AppleIntelFramebuffer18prepareToExitSleepEv",dovoid},
-				//{"__ZN21AppleIntelFramebuffer19prepareToEnterSleepEv",dovoid},
-				// Keep stock doAttribute while chasing UI stalls / high WindowServer CPU.
+			// Keep stock wake/sleep lifecycle handlers to avoid broken restore paths.
+			//{"__ZN21AppleIntelFramebuffer18prepareToEnterWakeEv",dovoid},
+			//{"__ZN21AppleIntelFramebuffer17prepareToExitWakeEv",dovoid},
+			//{"__ZN21AppleIntelFramebuffer18prepareToExitSleepEv",dovoid},
+			//{"__ZN21AppleIntelFramebuffer19prepareToEnterSleepEv",dovoid},
+			// Keep stock doAttribute while chasing UI stalls / high WindowServer CPU.
 			//		{"__ZN20IntelFBClientControl11doAttributeEjPmmS0_S0_P25IOExternalMethodArguments",wrapFBClientDoAttribute,	this->orgFBClientDoAttribute},
-				//ADDED
+			//ADDED
 			//{"__ZN21AppleIntelFramebuffer4initEP31AppleIntelFramebufferControllerj",AppleIntelFramebufferinit, this->oAppleIntelFramebufferinit},
 			//		{"__ZN31AppleIntelFramebufferController10hwShutdownEP21AppleIntelFramebuffer",handleLinkIntegrityCheck},
-					{"__ZN31AppleIntelFramebufferController18hwInitializeCStateEv",hwInitializeCState, this->ohwInitializeCState},
+				{"__ZN31AppleIntelFramebufferController18hwInitializeCStateEv",hwInitializeCState, this->ohwInitializeCState},
 			//		{"__ZN31AppleIntelFramebufferController20hwConfigureCustomAUXEb",hwConfigureCustomAUX, this->ohwConfigureCustomAUX},
 			//	{"__ZN31AppleIntelFramebufferController21probeCDClockFrequencyEv",wrapProbeCDClockFrequency,	this->orgProbeCDClockFrequency},
 				{"__ZN31AppleIntelFramebufferController11initCDClockEv",initCDClock,this->oinitCDClock}
 			};
 			PANIC_COND(!RouteRequestPlus::routeAll(patcher, index, requests, address, size), "nblue","Failed to route symbols");
 		}
+
 		//static const uint8_t f15[]= {0x00,0x02, 0x00, 0x5c, 0x8a};
 		//static const uint8_t r15[]= {0x00,0x00, 0x00, 0x49, 0x9a};
 		
@@ -388,28 +389,28 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 		
 
 		// Variant-consistent remap for constructor entries:
-			// B8 xx 00 5C 8A -> B8 xx 00 49 9A and exact C7 05 ... 02 00 5C 8A site.
-			static const uint8_t kPatchPlatformRemapMovEaxFind0[] = {0xB8, 0x00, 0x00, 0x5C, 0x8A};
-			static const uint8_t kPatchPlatformRemapMovEaxReplace0[] = {0xB8, 0x00, 0x00, 0x49, 0x9A};
-			static const uint8_t kPatchPlatformRemapMovEaxFind1[] = {0xB8, 0x01, 0x00, 0x5C, 0x8A};
-			static const uint8_t kPatchPlatformRemapMovEaxReplace1[] = {0xB8, 0x01, 0x00, 0x49, 0x9A};
-			static const uint8_t kPatchPlatformRemapMovEaxFind2[] = {0xB8, 0x02, 0x00, 0x5C, 0x8A};
-			static const uint8_t kPatchPlatformRemapMovEaxReplace2[] = {0xB8, 0x02, 0x00, 0x49, 0x9A};
-			static const uint8_t kPatchPlatformRemapC705Find2[] = {0xC7, 0x05, 0xE9, 0x9B, 0x05, 0x00, 0x02, 0x00, 0x5C, 0x8A};
-			static const uint8_t kPatchPlatformRemapC705Replace2[] = {0xC7, 0x05, 0xE9, 0x9B, 0x05, 0x00, 0x02, 0x00, 0x49, 0x9A};
+		// B8 xx 00 5C 8A -> B8 xx 00 49 9A and exact C7 05 ... 02 00 5C 8A site.
+		static const uint8_t kPatchPlatformRemapMovEaxFind0[] = {0xB8, 0x00, 0x00, 0x5C, 0x8A};
+		static const uint8_t kPatchPlatformRemapMovEaxReplace0[] = {0xB8, 0x00, 0x00, 0x49, 0x9A};
+		static const uint8_t kPatchPlatformRemapMovEaxFind1[] = {0xB8, 0x01, 0x00, 0x5C, 0x8A};
+		static const uint8_t kPatchPlatformRemapMovEaxReplace1[] = {0xB8, 0x01, 0x00, 0x49, 0x9A};
+		static const uint8_t kPatchPlatformRemapMovEaxFind2[] = {0xB8, 0x02, 0x00, 0x5C, 0x8A};
+		static const uint8_t kPatchPlatformRemapMovEaxReplace2[] = {0xB8, 0x02, 0x00, 0x49, 0x9A};
+		static const uint8_t kPatchPlatformRemapC705Find2[] = {0xC7, 0x05, 0xE9, 0x9B, 0x05, 0x00, 0x02, 0x00, 0x5C, 0x8A};
+		static const uint8_t kPatchPlatformRemapC705Replace2[] = {0xC7, 0x05, 0xE9, 0x9B, 0x05, 0x00, 0x02, 0x00, 0x49, 0x9A};
 
-			// hwSetMode: bypass hwRegsNeedUpdate result (CALL hwRegsNeedUpdate; TEST AL,AL: JE+0x62 → JMP+0x62)
-			// Verified unique (1 match at 0x94055) in ICL LP le binary. Forces register reprogram unconditionally. [ICL-LP]
-			static const uint8_t kPatchHwRegsNeedUpdateBypassFind[] = {0xe8, 0xe2, 0xcc, 0xff, 0xff, 0x84, 0xc0, 0x74, 0x62};
-			static const uint8_t kPatchHwRegsNeedUpdateBypassReplace[] = {0xe8, 0xe2, 0xcc, 0xff, 0xff, 0x84, 0xc0, 0xeb, 0x62};
+		// hwSetMode: bypass hwRegsNeedUpdate result (CALL hwRegsNeedUpdate; TEST AL,AL: JE+0x62 → JMP+0x62)
+		// Verified unique (1 match at 0x94055) in ICL LP le binary. Forces register reprogram unconditionally. [ICL-LP]
+		static const uint8_t kPatchHwRegsNeedUpdateBypassFind[] = {0xe8, 0xe2, 0xcc, 0xff, 0xff, 0x84, 0xc0, 0x74, 0x62};
+		static const uint8_t kPatchHwRegsNeedUpdateBypassReplace[] = {0xe8, 0xe2, 0xcc, 0xff, 0xff, 0x84, 0xc0, 0xeb, 0x62};
 
-			LookupPatchPlus const minPatches[] = {
-				{&kextG11FB, kPatchPlatformRemapMovEaxFind0, kPatchPlatformRemapMovEaxReplace0, arrsize(kPatchPlatformRemapMovEaxFind0), 1},
-				{&kextG11FB, kPatchPlatformRemapMovEaxFind1, kPatchPlatformRemapMovEaxReplace1, arrsize(kPatchPlatformRemapMovEaxFind1), 1},
-				{&kextG11FB, kPatchPlatformRemapMovEaxFind2, kPatchPlatformRemapMovEaxReplace2, arrsize(kPatchPlatformRemapMovEaxFind2), 1},
-				{&kextG11FB, kPatchPlatformRemapC705Find2, kPatchPlatformRemapC705Replace2, arrsize(kPatchPlatformRemapC705Find2), 1},
-				{&kextG11FB, kPatchHwRegsNeedUpdateBypassFind, kPatchHwRegsNeedUpdateBypassReplace, arrsize(kPatchHwRegsNeedUpdateBypassFind), 1},  // hwSetMode always reprogram [ICL-LP]
-			};
+		LookupPatchPlus const minPatches[] = {
+			{&kextG11FB, kPatchPlatformRemapMovEaxFind0, kPatchPlatformRemapMovEaxReplace0, arrsize(kPatchPlatformRemapMovEaxFind0), 1},
+			{&kextG11FB, kPatchPlatformRemapMovEaxFind1, kPatchPlatformRemapMovEaxReplace1, arrsize(kPatchPlatformRemapMovEaxFind1), 1},
+			{&kextG11FB, kPatchPlatformRemapMovEaxFind2, kPatchPlatformRemapMovEaxReplace2, arrsize(kPatchPlatformRemapMovEaxFind2), 1},
+			{&kextG11FB, kPatchPlatformRemapC705Find2, kPatchPlatformRemapC705Replace2, arrsize(kPatchPlatformRemapC705Find2), 1},
+			{&kextG11FB, kPatchHwRegsNeedUpdateBypassFind, kPatchHwRegsNeedUpdateBypassReplace, arrsize(kPatchHwRegsNeedUpdateBypassFind), 1},  // hwSetMode always reprogram [ICL-LP]
+		};
 		
 		PANIC_COND(!LookupPatchPlus::applyAll(patcher, minPatches , address, size), "ngreen", "kextG11FB Failed to apply patches!");
 		//PANIC_COND
@@ -543,7 +544,7 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 			// Keep native detailed timing validation; avoid overriding pixel clock fields.
 			//{"__ZN21AppleIntelFramebuffer22validateDetailedTimingEPvy", validateDetailedTiming, this->ovalidateDetailedTiming},
 			//{"__ZN21AppleIntelFramebuffer19validateDisplayModeEiPPKNS_15ModeDescriptionEPPK29IODetailedTimingInformationV2", validateDisplayMode, this->ovalidateDisplayMode},
-	   //     {"__ZN21AppleIntelFramebuffer18setupDisplayTimingEPK29IODetailedTimingInformationV2PS0_", setupDisplayTiming, this->osetupDisplayTiming},
+	   		//{"__ZN21AppleIntelFramebuffer18setupDisplayTimingEPK29IODetailedTimingInformationV2PS0_", setupDisplayTiming, this->osetupDisplayTiming},
 			//{"__ZN21AppleIntelFramebuffer18maxSupportedDepthsEPK29IODetailedTimingInformationV2", maxSupportedDepths, this->omaxSupportedDepths},
 			//{"__ZN21AppleIntelFramebuffer17validateModeDepthEPK29IODetailedTimingInformationV2j", validateModeDepth, this->ovalidateModeDepth},
 			//*****
@@ -850,7 +851,7 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 				{activeKext, f15, r15, arrsize(f15),	1},
 				//{activeKext, f16, r16, arrsize(f16),	1},
 				//{activeKext, f19, r19, arrsize(f19),	1},
-			//	{activeKext, f20, r20, arrsize(f20),	1},
+				//{activeKext, f20, r20, arrsize(f20),	1},
 				//{activeKext, f21, r21, arrsize(f21),	1},
 				//{activeKext, f22, r22, arrsize(f22),    1},
 				{activeKext, f6nb, r6nb, arrsize(f6nb),	1},
@@ -870,8 +871,7 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 		
 		return true;
 		
-		
-	}     else if (kextG11HW.loadIndex == index) {
+	}else if (kextG11HW.loadIndex == index) {
 		if (this->tglHWLoaded) {
 			DBGLOG("ngreen", "Skipping ICL HW — TGL HW already loaded");
 			return true;
@@ -893,19 +893,19 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 
 		if (!wegCoexist) {
 			RouteRequestPlus requests[] = {
-				 // PAVP/DRM: intercept session command callback (ICL hardware path, shared hook with TGL)
-				 {"__ZN16IntelAccelerator19PAVPCommandCallbackE22PAVPSessionCommandID_tjPjb", wrapPavpSessionCallback, this->orgPavpSessionCallback},
-				 // initHardwareCaps NOT routed: NBlue's wrapper reads TGL offset 0x1120 for SKU,
-				 // but ICL stores SKU at 0x1150. Let the original ICL code run — SKU gates are patched.
-				 // IGScheduler5resume NOT routed: kIGHwCsDesc is only resolved for kextG11HWT.
-				 // With -disablegfxfirmware, Host Preemptive scheduler is selected (not IGScheduler5).
-			//last	 {"__ZN12IGScheduler56resumeEv", IGScheduler5resume, this->oIGScheduler5resume},
-				 // resetGraphicsEngine NOT routed: NBlue wrapper applies TGL GT workarounds which
-				 // target TGL MMIO offsets. Hardware is RPL-P (adlp/raptorlake) — using TGL workarounds
-				 // on RPL MMIO could corrupt the command streamer. Let the ICL original run unmodified.
-			//last	 {"__ZN20IGHardwareRingBuffer19resetGraphicsEngineEP17IGHardwareContext", resetGraphicsEngine, this->oresetGraphicsEngine},
-			//last	 {"__ZN13IGHardwareGuC18checkWOPCMSettingsEmR14IOVirtualRange", checkWOPCMSettings, this->ocheckWOPCMSettings},
-			//last	 {"__ZN11IGScheduler15canLoadFirmwareEP16IntelAccelerator", canLoadFirmware, this->ocanLoadFirmware},
+				// PAVP/DRM: intercept session command callback (ICL hardware path, shared hook with TGL)
+				{"__ZN16IntelAccelerator19PAVPCommandCallbackE22PAVPSessionCommandID_tjPjb", wrapPavpSessionCallback, this->orgPavpSessionCallback},
+				// initHardwareCaps NOT routed: NBlue's wrapper reads TGL offset 0x1120 for SKU,
+				// but ICL stores SKU at 0x1150. Let the original ICL code run — SKU gates are patched.
+				// IGScheduler5resume NOT routed: kIGHwCsDesc is only resolved for kextG11HWT.
+				// With -disablegfxfirmware, Host Preemptive scheduler is selected (not IGScheduler5).
+				//last	 {"__ZN12IGScheduler56resumeEv", IGScheduler5resume, this->oIGScheduler5resume},
+				// resetGraphicsEngine NOT routed: NBlue wrapper applies TGL GT workarounds which
+				// target TGL MMIO offsets. Hardware is RPL-P (adlp/raptorlake) — using TGL workarounds
+				// on RPL MMIO could corrupt the command streamer. Let the ICL original run unmodified.
+				//last	 {"__ZN20IGHardwareRingBuffer19resetGraphicsEngineEP17IGHardwareContext", resetGraphicsEngine, this->oresetGraphicsEngine},
+				//last	 {"__ZN13IGHardwareGuC18checkWOPCMSettingsEmR14IOVirtualRange", checkWOPCMSettings, this->ocheckWOPCMSettings},
+				//last	 {"__ZN11IGScheduler15canLoadFirmwareEP16IntelAccelerator", canLoadFirmware, this->ocanLoadFirmware},
 				 // V36: Hook readAndClearInterrupts to initialize Gen11 multi-engine GT interrupts.
 				 // Same implementation as TGL path — Gen11 IRQ registers are identical for ICL/TGL.
 				 // V37: DISABLED — caused boot hang on TGL path; disabling ICL too for safety.
@@ -1004,21 +1004,21 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 			
 			 {"__ZN16IntelAccelerator20_PAVPCommandCallbackEP8OSObject22PAVPSessionCommandID_tjPj", wrapPavpSessionCallback, this->orgPavpSessionCallback},
 			
-// V163: Hook startGraphicsEngine to clear PERCTX_PREEMPT_CTRL (FF_SLICE_CS_CHICKEN1 bit 14)
+			// V163: Hook startGraphicsEngine to clear PERCTX_PREEMPT_CTRL (FF_SLICE_CS_CHICKEN1 bit 14)
 		 // immediately after the TGL kext enables it. The TGL kext writes 0x40004000 to reg 0x20E0
 		 // (mask=bit14, value=bit14=1). On RPL this causes the EU thread dispatcher to freeze on
 		 // first context switch because hardware snapshots the register into the context image DMA
 		 // buffer — clearing it here, before any execlist context is created, prevents the bad
 		 // value from ever reaching the DMA buffer.
-		 {"__ZN16IntelAccelerator19startGraphicsEngineEv", startGraphicsEngine, this->ostartGraphicsEngine},
+		 	{"__ZN16IntelAccelerator19startGraphicsEngineEv", startGraphicsEngine, this->ostartGraphicsEngine},
 
-		 // V164: Hook populateResetRegisterList which reads live MMIO values into the per-context
-		 // replay list (a batch of MI_LRI commands executed before every context switch).
-		 // startGraphicsEngine enables PERCTX_PREEMPT_CTRL then calls populateResetRegisterList,
-		 // which snapshots the live 0x4000 into the list. Hardware then replays 0x4000 back to
-		 // 0x20E0 on every context switch, overriding any post-hoc MMIO clear.
-		 // Fix: clear bit 14 BEFORE calling original so the snapshot captures 0x0000.
-		 {"__ZN16IntelAccelerator25populateResetRegisterListEv", populateResetRegisterList, this->opopulateResetRegisterList},
+			// V164: Hook populateResetRegisterList which reads live MMIO values into the per-context
+			// replay list (a batch of MI_LRI commands executed before every context switch).
+			// startGraphicsEngine enables PERCTX_PREEMPT_CTRL then calls populateResetRegisterList,
+			// which snapshots the live 0x4000 into the list. Hardware then replays 0x4000 back to
+			// 0x20E0 on every context switch, overriding any post-hoc MMIO clear.
+			// Fix: clear bit 14 BEFORE calling original so the snapshot captures 0x0000.
+			{"__ZN16IntelAccelerator25populateResetRegisterListEv", populateResetRegisterList, this->opopulateResetRegisterList},
 
 
 			 // V132: Hook task producers so submitBlit never sees a null IGAccelTask on spoofed RPL.
@@ -1352,9 +1352,6 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 		static const uint8_t r_v140_case4_store20[] = {
 			0x0f, 0xc6, 0xcc, 0xc6, 0x41, 0x0f, 0x11, 0x49, 0x20, 0x0f, 0xc6, 0xdc, 0x4e
 		};
-		
-
-		
 
 		{
 			// V52: Split patches into always-apply and RPL-only groups.
