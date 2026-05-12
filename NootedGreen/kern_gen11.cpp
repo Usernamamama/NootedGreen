@@ -835,14 +835,14 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 				//{activeKext, f4b, r4b, arrsize(f4b),	2},
 				//{activeKext, f4c, r4c, arrsize(f4c),	2},
 				//{activeKext, f6a, r6a, arrsize(f6a),	1},
-				{activeKext, f7, r7, arrsize(f7),	1},
+		//		{activeKext, f7, r7, arrsize(f7),	1},
 				// f10 ("hwreg" CALL+JZ→JMP bypass) commented out — NOT in NootedBlue.
 				//{activeKext, f10, r10, arrsize(f10),	1},
 				// f13: mandatory. Without this port-probe bypass the spoofed TGL path freezes during boot.
 				{activeKext, f13, r13, arrsize(f13),	1},
 				// f13b: mandatory. Without this bypass AppleIntelPort::probePortStateEv hits
 				// a pure-virtual call and panics in WindowServer during enableController.
-				{activeKext, f13b, r13b, arrsize(f13b),	1},
+		//		{activeKext, f13b, r13b, arrsize(f13b),	1},
 				// f15: suppress getPathByPipe log flood at IGLogLevel=8.
 				// On platform 0x9a490000 all paths are on pipe 0; every scan cycle logs
 				// "pipe = 0" many times per second, flooding the log unreadably.
@@ -854,13 +854,13 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 				//{activeKext, f20, r20, arrsize(f20),	1},
 				//{activeKext, f21, r21, arrsize(f21),	1},
 				//{activeKext, f22, r22, arrsize(f22),    1},
-				{activeKext, f6nb, r6nb, arrsize(f6nb),	1},
-				{activeKext, f19, r19, arrsize(f19),	1},
-				{activeKext, f20, r20, arrsize(f20),	1},
+		//		{activeKext, f6nb, r6nb, arrsize(f6nb),	1},
+		//		{activeKext, f19, r19, arrsize(f19),	1},
+		//		{activeKext, f20, r20, arrsize(f20),	1},
 				{activeKext, f24b, r24b, arrsize(f24b),	11},
-				{activeKext, f24c, r24c, arrsize(f24c),	1},
-				{activeKext, f24d, r24d, arrsize(f24d),	6},
-				{activeKext, f25,  r25,  arrsize(f25),	6},
+		//		{activeKext, f24c, r24c, arrsize(f24c),	1},
+		//		{activeKext, f24d, r24d, arrsize(f24d),	6},
+		//		{activeKext, f25,  r25,  arrsize(f25),	6},
 				// Path E: TCON ID rewrite — COMMENTED OUT (depends on GFX, hangs FB-only boot)
 				//{activeKext, f_tcon_camellia, r_tcon_camellia, arrsize(f_tcon_camellia),	1},
 				//{activeKext, f_tcon_banksia,  r_tcon_banksia,  arrsize(f_tcon_banksia),	1},
