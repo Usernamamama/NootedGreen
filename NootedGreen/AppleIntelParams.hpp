@@ -190,6 +190,16 @@ static_assert(sizeof(LinkConfig) == 0x80, "LinkConfig size");
 //   auto *mmio = getMember<void *>(ctrl, offsetof(AppleIntelBaseController, fMMIO));
 // ---------------------------------------------------------------------------
 
+// struct AppleIntelPowerWell -- PCode-discovered from AppleIntelPowerWell::init, 1 access site, ~0x20 bytes
+// Minimal layout; run extract_apple_params.py after annotating enable/disable/isEnabled in Ghidra
+// to recover fController, fIndex, fEnabled, fSupported fields.
+struct AppleIntelPowerWell {
+    uint8_t        _pad_0000[0x18];       // +0x00..+0x17  TBD
+    uint32_t       unk_0018;              // +0x18
+    uint8_t        _pad_001C[0x4];        // trailing
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from Ghidra.
+
 // struct AppleIntelBaseController -- PCode-discovered from AppleIntelBaseController::init, 21 access sites, ~0x1B28 bytes
 struct AppleIntelBaseController {
     uint8_t        _pad_0000[0x78]; // +0x0
@@ -201,9 +211,11 @@ struct AppleIntelBaseController {
     uint8_t        _pad_0B6C[0x34]; // +0xB6C
     uint32_t       unk_0BA0; // +0xBA0
     uint8_t        _pad_0BA4[0x34]; // +0xBA4
-    uint32_t       unk_0BD8; // +0xBD8
-    uint8_t        _pad_0BDC[0x328]; // +0xBDC
-    uint32_t       unk_0F04; // +0xF04
+    uint32_t       unk_0BD8;            // +0xBD8
+    uint8_t        _pad_0BDC[0x64];    // +0xBDC..+0xC3F
+    void          *unk_0C40;            // +0xC40  [KNOWN] RegCache pool/allocator — captured as ccont in PowerWell::init hook
+    uint8_t        _pad_0C48[0x2BC];   // +0xC48..+0xF03
+    uint32_t       unk_0F04;            // +0xF04
     uint8_t        _pad_0F08[0x5]; // +0xF08
     uint32_t       unk_0F0D; // +0xF0D
     uint8_t        _pad_0F11[0x193]; // +0xF11
@@ -232,6 +244,7 @@ struct AppleIntelBaseController {
 };
 // NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
 static_assert(__builtin_offsetof(AppleIntelBaseController, fMMIO) == 0x78, "AppleIntelBaseController.fMMIO");
+static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0C40) == 0xC40, "AppleIntelBaseController.unk_0C40");
 
 // struct AppleIntelDisplayPath -- PCode-discovered from AppleIntelDisplayPath::init, 3 access sites, ~0x32B0 bytes
 struct AppleIntelDisplayPath {

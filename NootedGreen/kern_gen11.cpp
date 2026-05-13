@@ -1706,6 +1706,17 @@ bool Gen11::paramsSurfCompare(AppleIntel::AppleIntelBaseController *that,
                               AppleIntel::CRTCParams *p1, AppleIntel::CRTCParams *p2,
                               AppleIntel::PLANEPARAMS *pl1, AppleIntel::PLANEPARAMS *pl2)
 {
+	// V408: force linear tiling in the NEW (pl2) PLANEPARAMS before the comparison.
+	// hwRegsNeedUpdate has no PLANEPARAMS argument — it cannot fix tiling there.
+	// paramsSurfCompare is the last point where pl2 can be patched before its values
+	// trigger raWriteRegister32 writes for PLANE_CTL and PLANE_STRIDE.
+	// Old (pl1/hardware) is already linear from UEFI; patching pl2 to match suppresses
+	// the X-tiled commit without any MMIO intercept.
+	if (NGreen::callback && !NGreen::callback->isRealTGL && pl2) {
+		pl2->PLANE_CTL    = (pl2->PLANE_CTL & ~(0x7u << 10));  // bits[12:10] = 000 → linear
+		pl2->PLANE_STRIDE = 0xa0;                               // 2560×4 / 64 = 160 = 0xa0
+	}
+
 	bool ret = FunctionCast(paramsSurfCompare, callback->oparamsSurfCompare)(that, p1, p2, pl1, pl2);
 
 	if (NGreen::callback == nullptr || NGreen::callback->isRealTGL) return ret;
@@ -2126,19 +2137,19 @@ void Gen11::AppleIntelScalerupdateRegisterCache(AppleIntel::AppleIntelScaler *th
 	FunctionCast(AppleIntelScalerupdateRegisterCache, callback->oAppleIntelScalerupdateRegisterCache)(that);
 }
 
-void Gen11::disableDisplayEngine(void *that)
+void Gen11::disableDisplayEngine(AppleIntel::AppleIntelBaseController *that)
 {
 	getMember<void *>(that, 0x78) = ccont;
 	FunctionCast(disableDisplayEngine, callback->odisableDisplayEngine)(that );
 }
 
-void Gen11::enableDisplayEngine(void *that)
+void Gen11::enableDisplayEngine(AppleIntel::AppleIntelBaseController *that)
 {
 	getMember<void *>(that, 0x78) = ccont;
 	FunctionCast(enableDisplayEngine, callback->oenableDisplayEngine)(that );
 }
 
-void Gen11::computeLaneCount(void *that, const void *timing, unsigned int linkRate, unsigned int bpp, unsigned int *laneCount) {
+void Gen11::computeLaneCount(AppleIntel::AppleIntelBaseController *that, const IODetailedTimingInformationV2 *timing, unsigned int linkRate, unsigned int bpp, unsigned int *laneCount) {
 	if (!laneCount) return;
 
 	// Call original first — handles all standard DP rates on both real TGL and spoofed paths.
@@ -2176,7 +2187,7 @@ void Gen11::computeLaneCount(void *that, const void *timing, unsigned int linkRa
 // port->maxLaneCount (from DPCD MAX_LANE_COUNT, which is 2 on this panel).
 // On !isRealTGL we instead snap the cached count to match DDI_BUF_CTL_A so that
 // SetupParams builds TRANS_DDI_FUNC_CTL with the correct HW-trained lane field.
-void Gen11::setupOptimalLaneCount(void *that, const void *timing, unsigned int bpp) {
+void Gen11::setupOptimalLaneCount(AppleIntel::AppleIntelBaseController *that, const IODetailedTimingInformationV2 *timing, unsigned int bpp) {
 	// Always run Apple's original first to populate all other LinkConfig fields.
 	FunctionCast(setupOptimalLaneCount, callback->osetupOptimalLaneCount)(that, timing, bpp);
 
@@ -2291,7 +2302,7 @@ IOReturn Gen11::wrapICLReadAUX(void *that, uint32_t address, void *buffer, uint3
 	return retVal;
 }
 
-void Gen11::getOnlineInfo(void *that, void *displayPath, unsigned char *online, unsigned char *changed) {
+void Gen11::getOnlineInfo(AppleIntel::AppleIntelFramebuffer *that, AppleIntel::AppleIntelDisplayPath *displayPath, unsigned char *online, unsigned char *changed) {
 	// V96 removed (was: force *online=1 for fbId==0). Confirmed no-op on this hardware:
 	// baseline log shows Apple's getOnlineInfo natively reports orig=1 for FB0, so the
 	// V96 forcing was already redundant. Keeping the wrapper as a logging shell so we
@@ -2318,7 +2329,7 @@ void Gen11::getOnlineInfo(void *that, void *displayPath, unsigned char *online, 
 // Forcing true with nonAperSurf==0 (the boot state) keeps us on the aperture path forever,
 // matching what V99S+V99G already do at the hardware level — but cleanly, at the driver level,
 // so WS sees a coherent fWSAAState→memory mapping and shouldn't degrade 0x3→0x1.
-bool Gen11::wrapIsApertureMemoryRequired(void *that) {
+bool Gen11::wrapIsApertureMemoryRequired(AppleIntel::AppleIntelFramebuffer *that) {
 	bool orig = FunctionCast(wrapIsApertureMemoryRequired, callback->oIsApertureMemoryRequired)(that);
 	const bool isRealTGL = NGreen::callback && NGreen::callback->isRealTGL;
 
@@ -2441,7 +2452,7 @@ IOReturn Gen11::wrapSetAttribute(void *that, uint32_t attr, uintptr_t value) {
 // wells; PG display wells (PG1/PG2) are in CTL1. Writing to CTL2 left CTL1 at the
 // DMC-reset value (0x405, no REQ bits) → hardware never enabled display power domains
 // → vsync interrupts never delivered → GPU ring idle → framebuffer stayed black.
-void Gen11::hwSetPowerWellStatePGE(void *that, bool param_1, uint param_2)
+void Gen11::hwSetPowerWellStatePGE(AppleIntel::AppleIntelBaseController *that, bool param_1, uint param_2)
 {
 	if (!NGreen::callback->isRealTGL) {
 		uint32_t ctl1 = NGreen::callback->readReg32(0x45400);
@@ -2463,19 +2474,19 @@ void Gen11::hwSetPowerWellStatePGE(void *that, bool param_1, uint param_2)
 	FunctionCast(hwSetPowerWellStatePGE, callback->ohwSetPowerWellStatePGE)(that, param_1, param_2);
 }
 
-void Gen11::hwSetPowerWellStateAux(void *that,bool param_1,uint param_2)
+void Gen11::hwSetPowerWellStateAux(AppleIntel::AppleIntelBaseController *that, bool param_1, uint param_2)
 {
 	getMember<void *>(that, 0x78) = ccont;
 	FunctionCast(hwSetPowerWellStateAux, callback->ohwSetPowerWellStateAux)(that,param_1,param_2);
 }
 
-void Gen11::hwSetPowerWellStateDDI(void *that,bool param_1,uint param_2)
+void Gen11::hwSetPowerWellStateDDI(AppleIntel::AppleIntelBaseController *that, bool param_1, uint param_2)
 {
 	getMember<void *>(that, 0x78) = ccont;
 	FunctionCast(hwSetPowerWellStateDDI, callback->ohwSetPowerWellStateDDI)(that,param_1,param_2);
 }
 
-void Gen11::FastWriteRegister32(void *that,unsigned long param_1,uint32_t param_2)
+void Gen11::FastWriteRegister32(AppleIntel::AppleIntelBaseController *that, unsigned long param_1, uint32_t param_2)
 {
 	// V99D: Diagnose — log all FastWrite calls near display engine range on first boot
 	// to understand what addresses/values flow through this path.
@@ -2810,7 +2821,8 @@ void Gen11::raWriteRegister32(void *that,unsigned long param_1, UInt32 param_2)
 				#undef R
 			}
 		}
-		/*// V99R[P] + V99G + linear CTL/STRIDE forces — CORE scanout coherence (!isRealTGL).
+		/*.  ------ MAN IN THE MIDDLE CHIP HACK -------
+		// V99R[P] + V99G + linear CTL/STRIDE forces — CORE scanout coherence (!isRealTGL).
 		// Confirmed load-bearing for visible scanout on spoofed RPL/ADL-P in dp0, dp1, AND
 		// without any -ngreendp* boot arg. Real TGL hardware programs these correctly via
 		// Apple's native code path — gating the entire triad on !isRealTGL.
@@ -2941,7 +2953,7 @@ uint32_t Gen11::AppleIntelFramebufferinit(AppleIntel::AppleIntelFramebuffer *fra
 
 
 
-void Gen11::initPlatformWorkarounds(void *that)
+void Gen11::initPlatformWorkarounds(AppleIntel::AppleIntelBaseController *that)
 {
 	// Platform workaround flags for ADL-P (RPL-P) running under TGL driver.
 	// 0xC5C = fInfoFlags2: display feature flags
@@ -2991,7 +3003,7 @@ void Gen11::initPlatformWorkarounds(void *that)
 	}
 }
 
-uint64_t Gen11::getOSInformation(void *that)
+uint64_t Gen11::getOSInformation(AppleIntel::AppleIntelBaseController *that)
 {
 	auto *pinfo = reinterpret_cast<PlatformInfo *>(callback->gPlatformInformationList);
 	if (pinfo) {
@@ -3051,7 +3063,7 @@ int Gen11::handleLinkIntegrityCheck()
 	return 0;
 };
 
-void Gen11::hwInitializeCState(void *that)
+void Gen11::hwInitializeCState(AppleIntel::AppleIntelBaseController *that)
 {
 	SYSLOG("ngreen", "NB-BUILD-V50-ALLOW-METAL");
 	int origB48 = getMember<int>(that, 0xB48);
@@ -3073,7 +3085,7 @@ void Gen11::hwInitializeCState(void *that)
 		SYSLOG("ngreen", "hwInitCState: ngreen-dmc=tgl, loading TGL DMC v2.12 (%u dwords)", tgl_dmc_ver2_12_bin_s / 4);
 		// Write TGL DMC blob to MMIO 0x80000+
 		for (unsigned long off = 0; off < tgl_dmc_ver2_12_bin_s; off += 4)
-			FastWriteRegister32(ccont, off + 0x80000,
+			FastWriteRegister32(reinterpret_cast<AppleIntel::AppleIntelBaseController *>(ccont), off + 0x80000,
 				*(const uint32_t *)((const char *)tgl_dmc_ver2_12_bin + off));
 
 		// Disable DC states before touching display engine registers (same as ADL-P path).
@@ -3145,7 +3157,7 @@ void Gen11::hwInitializeCState(void *that)
 		// (adlp_dmc_ver2_16.bin: CSS+package header stripped, pipe-A payload at file offset 0x310).
 		// Write directly to SRAM starting at 0x80000.
 		for (unsigned long off = 0; off < adlp_dmc_ver2_16_bin_s; off += 4)
-			FastWriteRegister32(ccont, off + 0x80000,
+			FastWriteRegister32(reinterpret_cast<AppleIntel::AppleIntelBaseController *>(ccont), off + 0x80000,
 				*(const uint32_t *)((const char *)adlp_dmc_ver2_16_bin + off));
 
 		// Disable DC states before touching display engine registers.
@@ -3364,13 +3376,13 @@ void Gen11::hwInitializeCState(void *that)
 	SYSLOG("ngreen", "hwInitCState: done");
 }
 
-void Gen11::AppleIntelPowerWellinit(void *that,void *param_1)
+void Gen11::AppleIntelPowerWellinit(AppleIntel::AppleIntelPowerWell *that, AppleIntel::AppleIntelBaseController *param_1)
 {
-	ccont = getMember<void *>(param_1, 0xc40);
+	ccont = param_1->unk_0C40;
 	FunctionCast(AppleIntelPowerWellinit, callback->oAppleIntelPowerWellinit)(that,param_1);
 }
 
-bool Gen11::AppleIntelBaseControllerstart(void *that,void *param_1)
+bool Gen11::AppleIntelBaseControllerstart(AppleIntel::AppleIntelBaseController *that, IOService *param_1)
 {
 	// V25: Display workarounds BEFORE start (no ForceWake needed for display regs 0x4xxxx+).
 	// GT workarounds moved AFTER start (ForceWake must be held for GT regs 0x0-0x7FFF).
@@ -3420,7 +3432,7 @@ bool Gen11::AppleIntelBaseControllerstart(void *that,void *param_1)
 	return ret;
 }
 
-uint32_t Gen11::wrapProbeCDClockFrequency(void *that) {
+uint32_t Gen11::wrapProbeCDClockFrequency(AppleIntel::AppleIntelBaseController *that) {
 
 	// Sonoma probeCDClockFrequency checks reg 0x46070 (BXT_DE_PLL_ENABLE) bit 31 first.
 	// If bit 31 is CLEAR it panics immediately: "Wrong CD clock frequency set by EFI".
@@ -3450,7 +3462,7 @@ uint32_t Gen11::wrapProbeCDClockFrequency(void *that) {
 	return retVal;
 }
 
-void Gen11::sanitizeCDClockFrequency(void *that) {
+void Gen11::sanitizeCDClockFrequency(AppleIntel::AppleIntelBaseController *that) {
 
 	//auto referenceFrequency = callback->wrapReadRegister32(that, SKL_DSSM) & ICL_DSSM_CDCLK_PLL_REFCLK_MASK;
 	auto referenceFrequency =NGreen::callback->readReg32(ICL_REG_DSSM)>> 29;
@@ -3524,36 +3536,33 @@ void Gen11::initCDClock(void *that)
 	getMember<uint64_t>(that, 0xe90) = probedFreq;
 }
 */
-void Gen11::initCDClock(void *that)
+void Gen11::initCDClock(AppleIntel::AppleIntelBaseController *that)
 {
 	return FunctionCast(initCDClock, callback->oinitCDClock)(that);
 }
 
-void Gen11::setCDClockFrequencyOnHotplug(void *that)
+void Gen11::setCDClockFrequencyOnHotplug(AppleIntel::AppleIntelBaseController *that)
 {
 	return FunctionCast(setCDClockFrequencyOnHotplug, callback->osetCDClockFrequencyOnHotplug)(that );
 }
 
 
-void Gen11::disableCDClock(void *that)
+void Gen11::disableCDClock(AppleIntel::AppleIntelBaseController *that)
 {
 	FunctionCast(disableCDClock, callback->odisableCDClock)(that );
 }
 
 uint8_t Gen11::hwRegsNeedUpdate
-		  (void *that,void *param_1,
-		   void *param_2,void *param_3,void *param_4,
-		   void *param_5)
+		  (AppleIntel::AppleIntelBaseController *that,
+		   AppleIntel::AppleIntelFramebuffer *param_1,
+		   AppleIntel::AppleIntelDisplayPath *param_2,
+		   AppleIntel::CRTCParams *param_3,
+		   const IODetailedTimingInformationV2 *param_4,
+		   AppleIntel::SCALERPARAMS *param_5)
 {
-	// IDA (hwSetMode + hwRegsNeedUpdate) confirms param_3 is the pending CRTCParams
-	// built by SetupParams. CRTCParams+0x04 is TRANS_DDI_FUNC_CTL. On spoofed !TGL,
-	// clear bit[16] before compare/apply so the full modeset path does not request
-	// 0x8a010106 against an already-trained 0x8a000106 link.
+	// param_3 is the pending CRTCParams built by SetupParams.
 	if (!NGreen::callback->isRealTGL && param_3) {
-		// Typed access via AppleIntel::CRTCParams (see AppleIntelParams.hpp). Offsets
-		// reconstructed from Ghidra Structure Editor + IDA disasm cross-check; static
-		// asserts in the header guard against drift.
-		auto *params = reinterpret_cast<AppleIntel::CRTCParams *>(param_3);
+		auto *params = param_3;
 
 		// V97P: clear bit[16] in TRANS_DDI_FUNC_CTL.
 		// Apple's SetupParams sets bit16 as a port-type flag; UEFI/HW never sets it.
@@ -3611,7 +3620,7 @@ uint8_t Gen11::hwRegsNeedUpdate
 	return FunctionCast(hwRegsNeedUpdate, callback->ohwRegsNeedUpdate)(that, param_1, param_2, param_3, param_4, param_5);
 }
 
-int Gen11::wrapHwSetupMemory(void *that, void *fb, void *displayPath, void *params, bool isAperture)
+int Gen11::wrapHwSetupMemory(AppleIntel::AppleIntelBaseController *that, AppleIntel::AppleIntelFramebuffer *fb, AppleIntel::AppleIntelDisplayPath *displayPath, AppleIntel::CRTCParams *params, bool isAperture)
 {
 	int ret = FunctionCast(wrapHwSetupMemory, callback->ohwSetupMemory)(that, fb, displayPath, params, isAperture);
 
@@ -8138,7 +8147,7 @@ bool Gen11::dotrue()
 }
 
 int iniin=1;
-void  Gen11::readAndClearInterrupts(void *that,void *param_1)
+void  Gen11::readAndClearInterrupts(AppleIntel::AppleIntelBaseController *that, void *param_1)
 {
 	
 	if (iniin){
@@ -8225,7 +8234,7 @@ void * Gen11::wprobe(void *that,void *param_1,int *param_2)
 {
 	//FunctionCast(wprobe, callback->owprobe)(that, param_1,param_2);
 	//logStateInRegistry(that,0x56);
-	initializeLogging(that);
+	initializeLogging(reinterpret_cast<AppleIntel::AppleIntelBaseController *>(that));
 	return that;
 	
 }
@@ -8412,7 +8421,7 @@ void Gen11::logStateInRegistry(void *that,uint param_1)
  FunctionCast(logStateInRegistry, callback->ologStateInRegistry)(that,param_1 );
 }
 
-void Gen11::initializeLogging(void *that)
+void Gen11::initializeLogging(AppleIntel::AppleIntelBaseController *that)
 {
 	FunctionCast(initializeLogging, callback->oinitializeLogging)(that );
 }
@@ -8654,18 +8663,18 @@ void Gen11::injectAcceleratorPersonality(bool useTglNames)
 
 
 
-void  Gen11::disablePowerWellPG(void *that,uint param_1)
+void  Gen11::disablePowerWellPG(AppleIntel::AppleIntelBaseController *that, uint param_1)
 {
 	getMember<void *>(that, 0x78) = ccont;
-	FunctionCast(disablePowerWellPG, callback->odisablePowerWellPG)(that,param_1 );
+	FunctionCast(disablePowerWellPG, callback->odisablePowerWellPG)(that, param_1);
 }
-void  Gen11::enablePowerWellPG(void *that,uint param_1)
+void  Gen11::enablePowerWellPG(AppleIntel::AppleIntelBaseController *that, uint param_1)
 {
 	getMember<void *>(that, 0x78) = ccont;
-	FunctionCast(enablePowerWellPG, callback->oenablePowerWellPG)(that,param_1 );
+	FunctionCast(enablePowerWellPG, callback->oenablePowerWellPG)(that, param_1);
 }
 
-void Gen11::hwSetPowerWellStatePG(void *that,bool param_1,uint param_2)
+void Gen11::hwSetPowerWellStatePG(AppleIntel::AppleIntelBaseController *that, bool param_1, uint param_2)
 {
 	getMember<void *>(that, 0x78) = ccont;
 	FunctionCast(hwSetPowerWellStatePG, callback->ohwSetPowerWellStatePG)(that,param_1,param_2);
@@ -8676,7 +8685,7 @@ void Gen11::hwSetPowerWellStatePG(void *that,bool param_1,uint param_2)
 
 
 
-void Gen11::hwConfigureCustomAUX(void *that,bool param_1)
+void Gen11::hwConfigureCustomAUX(AppleIntel::AppleIntelBaseController *that, bool param_1)
 {
 	SYSLOG("ngreen", "hwAUX p1=%d CE4=%d",
 		(int)param_1, getMember<int>(that, 0xCE4));
@@ -8811,7 +8820,7 @@ void * Gen11::ExtendedContextWithOptions(void *param_1)
 	return FunctionCast(ExtendedContextWithOptions, callback->oExtendedContextWithOptions)(param_1);
 }
 
-uint8_t Gen11::enableController(void *that)
+uint8_t Gen11::enableController(AppleIntel::AppleIntelFramebuffer *that)
 {
 	if (getMember<uint32_t>(that, 0x1dc)==0) getMember<uint8_t>(that, 0x1e0)=1;
 	auto ret= FunctionCast(enableController, callback->oenableController)(that);
@@ -8819,7 +8828,7 @@ uint8_t Gen11::enableController(void *that)
 }
 
 
-uint8_t Gen11::setDisplayMode(void *that,int param_1,int param_2)
+uint8_t Gen11::setDisplayMode(AppleIntel::AppleIntelFramebuffer *that, int param_1, int param_2)
 {
 	if (getMember<uint32_t>(that, 0x1dc)==0) getMember<uint8_t>(that, 0x1e0)=1;
 	return FunctionCast(setDisplayMode, callback->osetDisplayMode)(that,param_1,param_2 );
@@ -9069,8 +9078,10 @@ Gen11::IntelFBClientControldoAttribute
 
 int hw=1;
 int Gen11::hwSetMode
-		  (void *that,void *param_1,
-		   void *param_2,void *param_3)
+		  (AppleIntel::AppleIntelBaseController *that,
+		   AppleIntel::AppleIntelFramebuffer *param_1,
+		   AppleIntel::AppleIntelDisplayPath *param_2,
+		   AppleIntel::CRTCParams *param_3)
 {
 	// On RPL-P (spoofed TGL), setPortMode ran just before us and restored TRANS_DDI_FUNC_CTL_A
 	// to 0x8A000106 (4-lane eDP, matching UEFI DDI_BUF_CTL_A). paramsFbCompare inside the
@@ -9089,8 +9100,10 @@ int Gen11::hwSetMode
 }
 
 void Gen11::enablePipe
-		  (void *that,void *param_1,
-		   void *param_2,void *param_3)
+		  (AppleIntel::AppleIntelBaseController *that,
+		   AppleIntel::AppleIntelFramebuffer *param_1,
+		   AppleIntel::AppleIntelDisplayPath *param_2,
+		   AppleIntel::CRTCParams *param_3)
 {
 	return FunctionCast(enablePipe, callback->oenablePipe)(that, param_1, param_2, param_3);
 }

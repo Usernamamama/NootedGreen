@@ -50,6 +50,7 @@ STRUCT_WHITELIST = [
     "AppleIntelBaseController",
     "AppleIntelFramebuffer",
     "AppleIntelDisplayPath",
+    "AppleIntelPowerWell",
     "FlipTransactionArgs",
     "AppleIntelMMIO",
     "AppleIntelPlaneRegCache",
@@ -146,6 +147,18 @@ INIT_FUNC_TARGETS = [
     ("AppleIntelDisplayPath::trainLink", "AppleIntelDisplayPath", 0),
     ("AppleIntelDisplayPath::untrain", "AppleIntelDisplayPath", 0),
 
+    # ========== AppleIntelPowerWell (`this`) ==========
+    ("AppleIntelPowerWell::init", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::~AppleIntelPowerWell", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::enable", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::disable", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::isEnabled", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::isSupported", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::getController", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::getIndex", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::setPowerWellState", "AppleIntelPowerWell", 0),
+    ("AppleIntelPowerWell::getPowerWellState", "AppleIntelPowerWell", 0),
+
     # ========== Non-`this` parameter structs ==========
     ("AppleIntelPlane::configurePlane", "FlipTransactionArgs", 1),
     ("AppleIntelPlane::configureColorPipeLine", "FlipTransactionArgs", 1),
@@ -192,6 +205,10 @@ NESTED_POINTER_TARGETS = [
     ("AppleIntelScaler::updateRegisterCache", 0, 0x28, "AppleIntelScalerRegCache"),
     ("AppleIntelScaler::setupPipeScaler", 0, 0x28, "AppleIntelScalerRegCache"),
     ("AppleIntelScaler::programPipeScaler", 0, 0x28, "AppleIntelScalerRegCache"),
+
+    # unk_0C40 is a RegCache pool/allocator captured as ccont — follow it through
+    # enable/disable to discover what struct lives at AppleIntelBaseController+0xC40.
+    # Struct name TBD; removed until the actual type is confirmed in Ghidra.
 ]
 
 # Accessor-driven naming hints.
@@ -209,6 +226,11 @@ AUTO_FIELD_HINTS = [
     ("AppleIntelDisplayPath", "AppleIntelDisplayPath::setConnected", 0, "fConnected", None),
     ("AppleIntelDisplayPath", "AppleIntelDisplayPath::getDisplayPort", 0, "fDisplayPort", None),
     ("AppleIntelDisplayPath", "AppleIntelDisplayPath::getAuxChannel", 0, "fAuxChannel", None),
+    # AppleIntelPowerWell accessor hints
+    ("AppleIntelPowerWell", "AppleIntelPowerWell::getController", 0, "fController", "AppleIntelBaseController*"),
+    ("AppleIntelPowerWell", "AppleIntelPowerWell::getIndex",      0, "fIndex",      None),
+    ("AppleIntelPowerWell", "AppleIntelPowerWell::isEnabled",     0, "fEnabled",    None),
+    ("AppleIntelPowerWell", "AppleIntelPowerWell::isSupported",   0, "fSupported",  None),
 ]
 
 # Human-readable names for offsets we already know from reverse-engineering.
@@ -241,7 +263,15 @@ KNOWN_FIELD_NAMES = {
         0x90: ("fRegCache",    "AppleIntelPlaneRegCache*"),   # getMember<void*>(this,0x90)
     },
     "AppleIntelBaseController": {
-        0x78: ("fMMIO",        "AppleIntelMMIO*"),            # MMIO register accessor
+        0x78:  ("fMMIO",        "AppleIntelMMIO*"),            # MMIO register accessor
+        0xC40: ("unk_0C40",     None),                         # RegCache pool/allocator — captured as ccont in PowerWell::init hook; actual type TBD
+    },
+    # AppleIntelPowerWell: fields discovered from PCode analysis of enable/disable/isEnabled/init.
+    # Exact offsets TBD by Ghidra; entries will be populated after running the script.
+    "AppleIntelPowerWell": {
+        # Seed with what we can infer from the init hook:
+        # init(this, AppleIntelBaseController*) — the controller pointer must be stored somewhere.
+        # Placeholder; PCode analysis will populate the real offsets.
     },
     # AppleIntelFramebuffer inherits IOFramebuffer; Apple-private ivars start well past
     # the IOFramebuffer vtable region (~0x200). Offsets below are from disasm of
@@ -364,6 +394,7 @@ struct AppleIntelBaseController;
 struct AppleIntelDisplayPath;
 struct AppleIntelMMIO;
 struct AppleIntelPlaneRegCache;
+struct AppleIntelPowerWell;
 struct AppleIntelScalerRegCache;
 
 """

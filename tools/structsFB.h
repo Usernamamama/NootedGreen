@@ -7,9 +7,9 @@
 //  the script after updating struct definitions in Ghidra.
 //
 //  Source program: AppleIntelTGLGraphicsFramebuffer
-//  Generated: 2026-05-13T23:02:41.702000
+//  Generated: 2026-05-14T00:37:34.555000
 //
-//  Populated structs: 12  |  Stubs: 0  |  Enums: 2
+//  Populated structs: 13  |  Stubs: 0  |  Enums: 2
 
 #ifndef AppleIntelParams_hpp
 #define AppleIntelParams_hpp
@@ -22,6 +22,7 @@ struct AppleIntelBaseController;
 struct AppleIntelDisplayPath;
 struct AppleIntelMMIO;
 struct AppleIntelPlaneRegCache;
+struct AppleIntelPowerWell;
 struct AppleIntelScalerRegCache;
 
 // ---- Structs (fields identified) ----
@@ -122,7 +123,7 @@ static_assert(__builtin_offsetof(SCALERPARAMS, PS_WIN_SZ) == 0x8, "SCALERPARAMS.
 // ---- Structs (PCode-discovered, fully named) ----
 // These layouts are fully named from KNOWN_FIELD_NAMES and can be promoted as-is.
 
-// struct AppleIntelBaseController -- PCode-discovered from AppleIntelBaseController::init, 21 access sites, ~0x1B28 bytes
+// struct AppleIntelBaseController -- PCode-discovered from AppleIntelBaseController::init, 22 access sites, ~0x1B28 bytes
 struct AppleIntelBaseController {
     uint8_t        _pad_0000[0x78]; // +0x0
     AppleIntelMMIO* fMMIO; // +0x78
@@ -134,7 +135,9 @@ struct AppleIntelBaseController {
     uint32_t       unk_0BA0; // +0xBA0
     uint8_t        _pad_0BA4[0x34]; // +0xBA4
     uint32_t       unk_0BD8; // +0xBD8
-    uint8_t        _pad_0BDC[0x328]; // +0xBDC
+    uint8_t        _pad_0BDC[0x64]; // +0xBDC
+    void*          unk_0C40; // +0xC40  RegCache pool/allocator (captured as ccont); actual type TBD
+    uint8_t        _pad_0C48[0x2BC]; // +0xC48
     uint32_t       unk_0F04; // +0xF04
     uint8_t        _pad_0F08[0x5]; // +0xF08
     uint32_t       unk_0F0D; // +0xF0D
@@ -164,24 +167,7 @@ struct AppleIntelBaseController {
 };
 // NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
 static_assert(__builtin_offsetof(AppleIntelBaseController, fMMIO) == 0x78, "AppleIntelBaseController.fMMIO");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0918) == 0x918, "AppleIntelBaseController.unk_0918");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0B68) == 0xB68, "AppleIntelBaseController.unk_0B68");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0BA0) == 0xBA0, "AppleIntelBaseController.unk_0BA0");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0BD8) == 0xBD8, "AppleIntelBaseController.unk_0BD8");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0F04) == 0xF04, "AppleIntelBaseController.unk_0F04");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0F0D) == 0xF0D, "AppleIntelBaseController.unk_0F0D");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_10A4) == 0x10A4, "AppleIntelBaseController.unk_10A4");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_11BC) == 0x11BC, "AppleIntelBaseController.unk_11BC");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_13CF) == 0x13CF, "AppleIntelBaseController.unk_13CF");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_14B2) == 0x14B2, "AppleIntelBaseController.unk_14B2");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_14C0) == 0x14C0, "AppleIntelBaseController.unk_14C0");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_14D8) == 0x14D8, "AppleIntelBaseController.unk_14D8");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_1508) == 0x1508, "AppleIntelBaseController.unk_1508");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_1541) == 0x1541, "AppleIntelBaseController.unk_1541");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_15F0) == 0x15F0, "AppleIntelBaseController.unk_15F0");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_1B17) == 0x1B17, "AppleIntelBaseController.unk_1B17");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_1B20) == 0x1B20, "AppleIntelBaseController.unk_1B20");
-static_assert(__builtin_offsetof(AppleIntelBaseController, unk_1B24) == 0x1B24, "AppleIntelBaseController.unk_1B24");
+static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0C40) == 0xC40, "AppleIntelBaseController.unk_0C40");
 
 // struct AppleIntelDisplayPath -- PCode-discovered from AppleIntelDisplayPath::init, 3 access sites, ~0x32B0 bytes
 struct AppleIntelDisplayPath {
@@ -192,8 +178,6 @@ struct AppleIntelDisplayPath {
     uint8_t        _pad_32A8[0x8]; // trailing
 };
 // NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
-static_assert(__builtin_offsetof(AppleIntelDisplayPath, unk_0284) == 0x284, "AppleIntelDisplayPath.unk_0284");
-static_assert(__builtin_offsetof(AppleIntelDisplayPath, unk_32A4) == 0x32A4, "AppleIntelDisplayPath.unk_32A4");
 
 // struct AppleIntelFramebuffer -- PCode-discovered from AppleIntelFramebuffer::init, 16 access sites, ~0x4B90 bytes
 struct AppleIntelFramebuffer {
@@ -226,13 +210,6 @@ static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPipeIndex) == 0x1B0, "A
 static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPath) == 0x1B8, "AppleIntelFramebuffer.fPath");
 static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPanelPower) == 0x1C0, "AppleIntelFramebuffer.fPanelPower");
 static_assert(__builtin_offsetof(AppleIntelFramebuffer, fBacklightLevel) == 0x1C8, "AppleIntelFramebuffer.fBacklightLevel");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, unk_01E0) == 0x1E0, "AppleIntelFramebuffer.unk_01E0");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, unk_424C) == 0x424C, "AppleIntelFramebuffer.unk_424C");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, unk_4289) == 0x4289, "AppleIntelFramebuffer.unk_4289");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, unk_44DE) == 0x44DE, "AppleIntelFramebuffer.unk_44DE");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, unk_45AC) == 0x45AC, "AppleIntelFramebuffer.unk_45AC");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, unk_4A18) == 0x4A18, "AppleIntelFramebuffer.unk_4A18");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, unk_4B8C) == 0x4B8C, "AppleIntelFramebuffer.unk_4B8C");
 
 // struct AppleIntelMMIO -- PCode-discovered from AppleIntelMMIO::init, 1 access sites, ~0x8 bytes
 struct AppleIntelMMIO {
@@ -274,6 +251,14 @@ static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_CTL) == 0x100, "
 static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_STRIDE) == 0x104, "AppleIntelPlaneRegCache.PLANE_STRIDE");
 static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_COLOR_CTL) == 0x154, "AppleIntelPlaneRegCache.PLANE_COLOR_CTL");
 
+// struct AppleIntelPowerWell -- PCode-discovered from AppleIntelPowerWell::init, 1 access sites, ~0x20 bytes
+struct AppleIntelPowerWell {
+    uint8_t        _pad_0000[0x18]; // +0x0
+    uint32_t       unk_0018; // +0x18
+    uint8_t        _pad_001C[0x4]; // trailing
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+
 // struct AppleIntelScaler -- PCode-discovered from AppleIntelScaler::init, 7 access sites, ~0x50 bytes
 struct AppleIntelScaler {
     uint32_t       fPipeIndex; // +0x0
@@ -296,7 +281,6 @@ static_assert(__builtin_offsetof(AppleIntelScaler, fPath) == 0x10, "AppleIntelSc
 static_assert(__builtin_offsetof(AppleIntelScaler, fScalerIndex) == 0x18, "AppleIntelScaler.fScalerIndex");
 static_assert(__builtin_offsetof(AppleIntelScaler, fEnabled) == 0x20, "AppleIntelScaler.fEnabled");
 static_assert(__builtin_offsetof(AppleIntelScaler, fRegCache) == 0x28, "AppleIntelScaler.fRegCache");
-static_assert(__builtin_offsetof(AppleIntelScaler, unk_0047) == 0x47, "AppleIntelScaler.unk_0047");
 
 // struct AppleIntelScalerRegCache -- PCode-discovered from AppleIntelScalerRegCache::init, 3 access sites, ~0x10 bytes
 struct AppleIntelScalerRegCache {
@@ -322,8 +306,6 @@ struct FlipTransactionArgs {
 };
 // NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
 static_assert(__builtin_offsetof(FlipTransactionArgs, BPCSelector) == 0x1C, "FlipTransactionArgs.BPCSelector");
-static_assert(__builtin_offsetof(FlipTransactionArgs, unk_002C) == 0x2C, "FlipTransactionArgs.unk_002C");
-static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0030) == 0x30, "FlipTransactionArgs.unk_0030");
 static_assert(__builtin_offsetof(FlipTransactionArgs, TilingEnum) == 0x3C, "FlipTransactionArgs.TilingEnum");
 
 } // namespace AppleIntel

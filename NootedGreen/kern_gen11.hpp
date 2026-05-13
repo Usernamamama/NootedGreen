@@ -1476,7 +1476,7 @@ private:
 	mach_vm_address_t oprepareToExitSleep {};
 	mach_vm_address_t oprepareToEnterSleep {};
 	
-	static void hwInitializeCState(void *that);
+	static void hwInitializeCState(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t ohwInitializeCState {};
 
 	bool isICLFB {false};   // true when loaded under AppleIntelICLLPGraphicsFramebuffer
@@ -1488,49 +1488,52 @@ private:
 	void *v131CachedBlit2DCtx {nullptr};  // Fallback 2D context when creation fails
 	void *v132CachedTask {nullptr};       // Fallback IGAccelTask when per-user task creation fails
 
-	static void hwConfigureCustomAUX(void *that,bool param_1);
+	static void hwConfigureCustomAUX(AppleIntel::AppleIntelBaseController *that, bool param_1);
 	mach_vm_address_t ohwConfigureCustomAUX {};
 	
-	static void FastWriteRegister32(void *that,unsigned long param_1,uint32_t param_2);
+	static void FastWriteRegister32(AppleIntel::AppleIntelBaseController *that, unsigned long param_1, uint32_t param_2);
 	mach_vm_address_t oFastWriteRegister32 {};
 	
 	mach_vm_address_t gPlatformInformationList {};
 
-	static void     initPlatformWorkarounds(void *that);
+	static void     initPlatformWorkarounds(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t oinitPlatformWorkarounds {};
 
-	static uint64_t getOSInformation(void *that);
+	static uint64_t getOSInformation(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t ogetOSInformation {};
 	
-	static uint8_t setDisplayMode(void *that,int param_1,int param_2);
+	static uint8_t setDisplayMode(AppleIntel::AppleIntelFramebuffer *that, int param_1, int param_2);
 	mach_vm_address_t osetDisplayMode {};
 	
 	static uint8_t hwRegsNeedUpdate
-			  (void *that,void *param_1,
-			   void *param_2,void *param_3,void *param_4,
-			   void *param_5);
+			  (AppleIntel::AppleIntelBaseController *that,
+			   AppleIntel::AppleIntelFramebuffer *param_1,
+			   AppleIntel::AppleIntelDisplayPath *param_2,
+			   AppleIntel::CRTCParams *param_3,
+			   const IODetailedTimingInformationV2 *param_4,
+			   AppleIntel::SCALERPARAMS *param_5);
 	mach_vm_address_t ohwRegsNeedUpdate {};
 
 	// Force eDP lane count to match the HW-trained count from DDI_BUF_CTL_A.
-	static void computeLaneCount(void *that, const void *timing, unsigned int linkRate, unsigned int bpp, unsigned int *laneCount);
+	static void computeLaneCount(AppleIntel::AppleIntelBaseController *that, const IODetailedTimingInformationV2 *timing, unsigned int linkRate, unsigned int bpp, unsigned int *laneCount);
 	mach_vm_address_t ocomputeLaneCount {};
 
 	// setupOptimalLaneCount caps computeLaneCount's result to DPCD MAX_LANE_COUNT.
 	// On RPL the panel reports MAX_LANE_COUNT=2 but UEFI trained 4 lanes, so we
 	// override the cached optimal to match DDI_BUF_CTL_A instead.
-	static void setupOptimalLaneCount(void *that, const void *timing, unsigned int bpp);
+	static void setupOptimalLaneCount(AppleIntel::AppleIntelBaseController *that, const IODetailedTimingInformationV2 *timing, unsigned int bpp);
 	mach_vm_address_t osetupOptimalLaneCount {};
 
 	// V96: Force display online — WEG's force-online (FOD) hooks getDisplayStatus which
 	// does NOT exist in the TGL framebuffer kext, so it fails with "err 2" at boot.
 	// The TGL FB uses getOnlineInfo instead; hook it here to unconditionally report online.
-	static void getOnlineInfo(void *that, void *displayPath, unsigned char *online, unsigned char *changed);
+	static void getOnlineInfo(AppleIntel::AppleIntelFramebuffer *that, AppleIntel::AppleIntelDisplayPath *displayPath, unsigned char *online, unsigned char *changed);
 	mach_vm_address_t ogetOnlineInfo {};
 
 	// Path B: Force AppleIntelFramebuffer::isApertureMemoryRequired() to return true under
 	// dp0 mode so setupScanoutMemory never migrates from aperture to non-aperture memory
 	// when WindowServer transitions fWSAAState 0→3.  Returns the original value otherwise.
-	static bool wrapIsApertureMemoryRequired(void *that);
+	static bool wrapIsApertureMemoryRequired(AppleIntel::AppleIntelFramebuffer *that);
 	mach_vm_address_t oIsApertureMemoryRequired {};
 
 	// Path C: Hook AppleIntelFramebuffer::setAttribute(IOSelect, uintptr_t).
@@ -1648,13 +1651,13 @@ private:
 	static void configurePlane(AppleIntel::AppleIntelPlane *that, AppleIntel::FlipTransactionArgs *flipArgs);
 	mach_vm_address_t oConfigurePlane {};
 
-	static void  disablePowerWellPG(void *that,uint param_1);
+	static void  disablePowerWellPG(AppleIntel::AppleIntelBaseController *that, uint param_1);
 	mach_vm_address_t odisablePowerWellPG {};
-	
-	static void  enablePowerWellPG(void *that,uint param_1);
+
+	static void  enablePowerWellPG(AppleIntel::AppleIntelBaseController *that, uint param_1);
 	mach_vm_address_t oenablePowerWellPG {};
 	
-	static void hwSetPowerWellStatePG(void *that,bool param_1,uint param_2);
+	static void hwSetPowerWellStatePG(AppleIntel::AppleIntelBaseController *that, bool param_1, uint param_2);
 	mach_vm_address_t ohwSetPowerWellStatePG {};
 
 	// V182: hwSetPowerWellStatePGE — enables PW_1/PW_2 (display power gates).
@@ -1662,49 +1665,49 @@ private:
 	// fixup (same pattern as DDI/Aux). Linux confirms PW_1+PW_2 must be up
 	// before eDP AUX/PHY-A can be initialized. cold.1-.12 remain no-op to
 	// silence Apple's assert-on-timeout cold paths.
-	static void hwSetPowerWellStatePGE(void *that,bool param_1,uint param_2);
+	static void hwSetPowerWellStatePGE(AppleIntel::AppleIntelBaseController *that, bool param_1, uint param_2);
 	mach_vm_address_t ohwSetPowerWellStatePGE {};
 	
-	static void hwSetPowerWellStateDDI(void *that,bool param_1,uint param_2);
+	static void hwSetPowerWellStateDDI(AppleIntel::AppleIntelBaseController *that, bool param_1, uint param_2);
 	mach_vm_address_t ohwSetPowerWellStateDDI {};
 	
-	static void hwSetPowerWellStateAux(void *that,bool param_1,uint param_2);
+	static void hwSetPowerWellStateAux(AppleIntel::AppleIntelBaseController *that, bool param_1, uint param_2);
 	mach_vm_address_t ohwSetPowerWellStateAux {};
 	
 	
 	
-	static void AppleIntelPowerWellinit(void *that,void *param_1);
+	static void AppleIntelPowerWellinit(AppleIntel::AppleIntelPowerWell *that, AppleIntel::AppleIntelBaseController *param_1);
 	mach_vm_address_t oAppleIntelPowerWellinit {};
 	
 	static int hasExternalDispla();
 	
-	static void enableDisplayEngine(void *that);
+	static void enableDisplayEngine(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t oenableDisplayEngine {};
 	
-	static void disableDisplayEngine(void *that);
+	static void disableDisplayEngine(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t odisableDisplayEngine {};
 	
 
-	static uint8_t enableController(void *that);
+	static uint8_t enableController(AppleIntel::AppleIntelFramebuffer *that);
 	mach_vm_address_t oenableController {};
 	
-	static void initializeLogging(void *that);
+	static void initializeLogging(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t oinitializeLogging {};
 	
 	// ── CDCLK management ──
-	static void sanitizeCDClockFrequency(void *that);  // clamp cdclk to valid range
-	static uint32_t wrapProbeCDClockFrequency(void *that);
+	static void sanitizeCDClockFrequency(AppleIntel::AppleIntelBaseController *that);
+	static uint32_t wrapProbeCDClockFrequency(AppleIntel::AppleIntelBaseController *that);
 	
-	static void  readAndClearInterrupts(void *that,void *param_1);
+	static void  readAndClearInterrupts(AppleIntel::AppleIntelBaseController *that, void *param_1);
 	mach_vm_address_t oreadAndClearInterrupts {};
 	
-	static void initCDClock(void *that);
+	static void initCDClock(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t oinitCDClock {};
 	
-	static void setCDClockFrequencyOnHotplug(void *that);
+	static void setCDClockFrequencyOnHotplug(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t osetCDClockFrequencyOnHotplug {};
 	
-	static void disableCDClock(void *that);
+	static void disableCDClock(AppleIntel::AppleIntelBaseController *that);
 	mach_vm_address_t odisableCDClock {};
 	
 	uint32_t (*orgProbeCDClockFrequency)(void *) {nullptr};
@@ -1718,13 +1721,17 @@ private:
 	mach_vm_address_t otgstart {};
 	
 	static int hwSetMode
-			  (void *that,void *param_1,
-			   void *param_2,void *param_3);
+			  (AppleIntel::AppleIntelBaseController *that,
+			   AppleIntel::AppleIntelFramebuffer *param_1,
+			   AppleIntel::AppleIntelDisplayPath *param_2,
+			   AppleIntel::CRTCParams *param_3);
 	mach_vm_address_t ohwSetMode {};
 	
 	static void enablePipe
-			  (void *that,void *param_1,
-			   void *param_2,void *param_3);
+			  (AppleIntel::AppleIntelBaseController *that,
+			   AppleIntel::AppleIntelFramebuffer *param_1,
+			   AppleIntel::AppleIntelDisplayPath *param_2,
+			   AppleIntel::CRTCParams *param_3);
 	mach_vm_address_t oenablePipe {};
 	
 	static uint8_t beginReset(void *that);
@@ -1860,13 +1867,13 @@ private:
 	mach_vm_address_t oAppleIntelScalernew {};
 	
 	// FB controller start — wraps original, adds registerService() for accelerator matching
-	static bool AppleIntelBaseControllerstart(void *that,void *param_1);
+	static bool AppleIntelBaseControllerstart(AppleIntel::AppleIntelBaseController *that, IOService *param_1);
 	mach_vm_address_t oAppleIntelBaseControllerstart {};
 
 	// V201 diagnostic: read first bytes of the scanout buffer right after hwSetupMemory
 	// returns. Tells us whether something filled the buffer (wallpaper) or it's still
 	// zeros from the IOBufferMemoryDescriptor allocation.
-	static int wrapHwSetupMemory(void *that, void *fb, void *displayPath, void *params, bool isAperture);
+	static int wrapHwSetupMemory(AppleIntel::AppleIntelBaseController *that, AppleIntel::AppleIntelFramebuffer *fb, AppleIntel::AppleIntelDisplayPath *displayPath, AppleIntel::CRTCParams *params, bool isAperture);
 	mach_vm_address_t ohwSetupMemory {};
 
 	// V208: AppleIntelFramebuffer::start() override that refuses fbId != 0. Hides
