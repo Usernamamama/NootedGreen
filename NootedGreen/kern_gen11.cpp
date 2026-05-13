@@ -495,6 +495,15 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 			// V404: setupPipeWatermarks — runs INSIDE SetupParams before setupPipeScaler.
 			// Per-pipe DBUF/watermark allocator. Prime suspect for setting PIPE_SEAM_EXCESS=0x1.
 			{"__ZN24AppleIntelBaseController19setupPipeWatermarksEP21AppleIntelFramebufferP21AppleIntelDisplayPathP10CRTCParams", setupPipeWatermarks, this->osetupPipeWatermarks},
+			// V405: AppleIntelPlane::configureColorPipeLine(FlipTransactionArgs*, bool)
+			// Dispatches 8/10/12/12SEG gamma pipeline based on FlipTransactionArgs BPC mode.
+			// Hook logs GAMMA_MODE (0x4A480) and PIPE_MISC (0x70030) before/after the call
+			// to confirm Apple writes correct values for ADL-P Display 13 on our 8bpc eDP.
+			{"__ZN15AppleIntelPlane22configureColorPipeLineEP19FlipTransactionArgsb", configureColorPipeLine, this->oConfigureColorPipeLine},
+			// V406: AppleIntelPlane::configurePlane(FlipTransactionArgs*)
+			// Patches FlipTransactionArgs+0x3c tiling enum to 2 (linear) so Apple builds
+			// PLANE_CTL with bits[12:10]=000 and PLANE_STRIDE=pitch/512 natively.
+			{"__ZN15AppleIntelPlane14configurePlaneEP19FlipTransactionArgs", configurePlane, this->oConfigurePlane},
 			{"__ZN15AppleIntelPlane19updateRegisterCacheEv",AppleIntelPlaneupdateRegisterCache, this->oAppleIntelPlaneupdateRegisterCache},
 			{"__ZN16AppleIntelScaler19updateRegisterCacheEv",AppleIntelScalerupdateRegisterCache, this->oAppleIntelScalerupdateRegisterCache},
 			{"__ZN19AppleIntelPowerWell20disableDisplayEngineEv",disableDisplayEngine, this->odisableDisplayEngine},
@@ -1848,6 +1857,271 @@ void Gen11::setupPipeWatermarks(void *that, void *fb, void *path, void *params)
 			   : (pre_seam != 0 ? "(seam pre-existed)" : "(no seam)"));
 }
 
+// V405: AppleIntelPlane::configureColorPipeLine(FlipTransactionArgs*, bool)
+//
+// Dispatches to configurePipePostCSCGamma_{8,10,12,12SEG}Bit based on a BPC/gamma
+// mode selector field within FlipTransactionArgs.  The field is at byte offset 0x1C
+// (IDA's "param_1[7].Tiling" — element 7 of a dword array inside the struct).
+//
+// For our 2560×1600 eDP at 8bpc this always hits case 0 → 8Bit, which writes:
+//   GAMMA_MODE   (0x4A480, Pipe A) = 0x0  (LEGACY_8BIT)
+//   PIPE_MISC    (0x70030, Pipe A) bits[5:3] = 0b000 (8 bpc)
+//
+// Display 13 (ADL-P) uses the same register addresses as Display 12 (TGL), so
+// Apple's writes are structurally correct.  The hook logs pre/post snapshots so
+// we can confirm the hardware actually sees the right values each flip cycle.
+void Gen11::configureColorPipeLine(void *that, void *flipArgs, bool param_2)
+{
+	uint32_t pre_gamma = 0, pre_misc = 0;
+	uint8_t  sel = 0xFF;
+
+	if (NGreen::callback != nullptr && !NGreen::callback->isRealTGL) {
+		pre_gamma = NGreen::callback->readReg32(0x4A480);  // GAMMA_MODE Pipe A
+		pre_misc  = NGreen::callback->readReg32(0x70030);  // PIPE_MISC  Pipe A
+		// FlipTransactionArgs BPC selector: IDA 'param_1[7].Tiling' = dword at +0x1C
+		if (flipArgs != nullptr)
+			sel = static_cast<uint8_t>(*reinterpret_cast<uint32_t *>(
+				reinterpret_cast<uint8_t *>(flipArgs) + 0x1C));
+	}
+
+	FunctionCast(configureColorPipeLine, callback->oConfigureColorPipeLine)(that, flipArgs, param_2);
+
+	if (NGreen::callback == nullptr || NGreen::callback->isRealTGL) return;
+
+	static int v405Count = 0;
+	if (v405Count >= 8) return;
+	++v405Count;
+
+	const uint32_t post_gamma = NGreen::callback->readReg32(0x4A480);
+	const uint32_t post_misc  = NGreen::callback->readReg32(0x70030);
+	// PIPE_MISC BPC field: bits[5:3].  0=8bpc, 1=10bpc, 2=6bpc, 3=12bpc.
+	const uint8_t bpc_pre  = (pre_misc  >> 3) & 0x7u;
+	const uint8_t bpc_post = (post_misc >> 3) & 0x7u;
+	// GAMMA_MODE encoding: 0=legacy8bit, 1=prec10bit, 2=prec12interp, 3=split
+	const char *gammaName[] = {"LEGACY_8BIT", "PREC_10BIT", "PREC_12INTERP", "SPLIT"};
+	const char *gname = (post_gamma <= 3) ? gammaName[post_gamma] : "unknown";
+
+	SYSLOG("ngreen", "V405[%d]: configureColorPipeLine sel=0x%02x param2=%d | "
+		   "GAMMA_MODE: 0x%x→0x%x(%s) | PIPE_MISC: 0x%x→0x%x bpc[5:3]=%u→%u",
+		   v405Count, sel, (int)param_2,
+		   pre_gamma, post_gamma, gname,
+		   pre_misc, post_misc, bpc_pre, bpc_post);
+}
+
+// V406: CORE origin-level plane tiling/stride manipulation for ADL-P/RPL spoofed as TGL.
+// Physical framebuffer pages are CPU-written in linear order. Apple's IOSurface allocates
+// with tiling enum=0 (X-tiled) → configurePlane ORs PLANE_CTL bit10 → display engine
+// fetches X-tile geometry → black screen.
+//
+// Linux i915 on this exact ADL-P hardware: modifier=0x0 (LINEAR), stride=0x2800 bytes (0x14 units)
+//
+// FlipTransactionArgs+0x3c tiling enum (from disasm VA 0x59ad-0x59c3):
+//   0x0 → X-tiled:  ORs 0x400 into PLANE_CTL bits[12:10] = 001
+//   0x1 → Y-tiled:  ORs 0x1000 into bits[12:10] = 100
+//   else → linear:  ANDs 0xffe7e7ff (clears bits[12:10] = 000)
+//
+// AppleIntelPlane shadow offsets (from configurePlane disasm):
+//   +0x100 = PLANE_CTL shadow (tiling bits built here, read @ VA 0x5a41)
+//   +0x104 = PLANE_STRIDE shadow (read @ VA 0x6867)
+//   +0x154 = PLANE_COLOR_CTL shadow (post-OR write @ VA 0x6687)
+//
+// ============================================================================
+// === CHOOSE ONE: Main approach (uncomment your choice below) ===
+// ============================================================================
+
+// ✓ APPROACH 1: PRE-CALL TILING PATCH (origin-level, Apple's natural path)
+#define V406_APPROACH_TILING_PATCH 1
+
+// Alternative approaches below (comment out APPROACH 1 if trying these):
+// #define V406_APPROACH_POST_SHADOW_PATCH 1      // Post-call shadow field write
+// #define V406_APPROACH_STRIDE_DIVISOR 1          // Stride divisor manipulation
+// #define V406_APPROACH_DUAL_TILING_STRIDE 1      // Tiling + stride combined
+// #define V406_APPROACH_DIAGNOSTIC_ONLY 1         // Pass-through with logging
+
+// ============================================================================
+// === TILING ENUM SELECTOR (active for approaches using pre-call patch) ===
+// ============================================================================
+
+#define V406_TILING_VALUE 2          // 0=X-tiled, 1=Y-tiled, 2=linear, 3+=else/linear
+// #define V406_TILING_VALUE 1       // Try Y-tiled
+// #define V406_TILING_VALUE 0       // Try X-tiled (original—likely fails)
+
+// ============================================================================
+// === STRIDE FORCE (active for stride-manipulation approaches) ===
+// ============================================================================
+
+#define V406_STRIDE_FORCE_ENABLE 0              // 0=disabled, 1=force post-call
+#define V406_STRIDE_VALUE 0x14                  // 0x14 (std X-tile), 0xa0 (linear?), 0x20, etc.
+
+// ============================================================================
+// === PLANE_CTL BITS MANIPULATION (advanced—leave as 0 unless testing) ===
+// ============================================================================
+
+#define V406_PLANE_CTL_CLEAR_MASK 0x0           // Bits to clear (0xFFE7E7FF = tiling bits)
+#define V406_PLANE_CTL_SET_MASK 0x0             // Bits to set (0x400=X-tiled, 0x1000=Y-tiled)
+
+// ============================================================================
+// === SHADOW FIELD OFFSET OVERRIDES (for post-call patching) ===
+// ============================================================================
+
+#define V406_STRIDE_SHADOW_OFFSET 0x104         // AppleIntelPlane+0x104 = PLANE_STRIDE
+#define V406_CTL_SHADOW_OFFSET 0x100            // AppleIntelPlane+0x100 = PLANE_CTL
+
+// ============================================================================
+
+void Gen11::configurePlane(void *that, void *flipArgs)
+{
+	if (NGreen::callback == nullptr || NGreen::callback->isRealTGL || flipArgs == nullptr) {
+		FunctionCast(configurePlane, callback->oConfigurePlane)(that, flipArgs);
+		return;
+	}
+
+	// Pre-call snapshot
+	uint32_t incomingTiling = 0;
+	if (flipArgs != nullptr) {
+		incomingTiling = *reinterpret_cast<uint32_t *>(
+			reinterpret_cast<uint8_t *>(flipArgs) + 0x3c);
+	}
+
+	static int v406CallCount = 0;
+	static int v406LogCount = 0;
+	++v406CallCount;
+
+#ifdef V406_APPROACH_TILING_PATCH
+	// ===== APPROACH 1: PRE-CALL TILING PATCH =====
+	// Patch FlipTransactionArgs+0x3c before calling original
+	// Apple's configurePlane reads this, takes the corresponding disasm branch,
+	// builds PLANE_CTL with correct tiling bits natively
+	
+	uint32_t *tilingField = reinterpret_cast<uint32_t *>(
+		reinterpret_cast<uint8_t *>(flipArgs) + 0x3c);
+	const uint32_t savedTiling = *tilingField;
+	*tilingField = V406_TILING_VALUE;
+
+	if (v406LogCount < 20) {
+		++v406LogCount;
+		SYSLOG("ngreen", "V406[%d]: TILING_PATCH call#%d | "
+			   "Incoming tiling=0x%x → Patched=0x%x (%s)",
+			   v406LogCount, v406CallCount, incomingTiling, V406_TILING_VALUE,
+			   (V406_TILING_VALUE == 0) ? "X-tiled" :
+			   (V406_TILING_VALUE == 1) ? "Y-tiled" : "linear/else");
+	}
+
+	FunctionCast(configurePlane, callback->oConfigurePlane)(that, flipArgs);
+
+	*tilingField = savedTiling;   // restore
+
+#elif defined(V406_APPROACH_POST_SHADOW_PATCH)
+	// ===== APPROACH 2: POST-CALL SHADOW PATCH =====
+	// Call original, then modify AppleIntelPlane shadow fields directly
+	
+	FunctionCast(configurePlane, callback->oConfigurePlane)(that, flipArgs);
+
+	if (that != nullptr) {
+		// Patch PLANE_CTL shadow at +0x100 (or custom offset)
+		uint32_t &ctlShadow = getMember<uint32_t>(that, V406_CTL_SHADOW_OFFSET);
+		const uint32_t ctlBefore = ctlShadow;
+		
+		// Clear tiling bits if needed
+		if (V406_PLANE_CTL_CLEAR_MASK != 0)
+			ctlShadow &= ~V406_PLANE_CTL_CLEAR_MASK;
+		
+		// Set specific bits if needed
+		if (V406_PLANE_CTL_SET_MASK != 0)
+			ctlShadow |= V406_PLANE_CTL_SET_MASK;
+		
+		if (v406LogCount < 20) {
+			++v406LogCount;
+			SYSLOG("ngreen", "V406[%d]: POST_SHADOW_PATCH call#%d | "
+				   "PLANE_CTL shadow @+0x%x: 0x%x → 0x%x (clear=0x%x set=0x%x)",
+				   v406LogCount, v406CallCount, V406_CTL_SHADOW_OFFSET,
+				   ctlBefore, ctlShadow, V406_PLANE_CTL_CLEAR_MASK, V406_PLANE_CTL_SET_MASK);
+		}
+
+		// Optionally patch STRIDE shadow
+		if (V406_STRIDE_FORCE_ENABLE) {
+			uint32_t &strideShadow = getMember<uint32_t>(that, V406_STRIDE_SHADOW_OFFSET);
+			const uint32_t strideBefore = strideShadow;
+			strideShadow = V406_STRIDE_VALUE;
+			if (v406LogCount < 20) {
+				SYSLOG("ngreen", "V406[%d]: STRIDE shadow @+0x%x: 0x%x → 0x%x",
+					   v406LogCount, V406_STRIDE_SHADOW_OFFSET, strideBefore, V406_STRIDE_VALUE);
+			}
+		}
+	}
+
+#elif defined(V406_APPROACH_STRIDE_DIVISOR)
+	// ===== APPROACH 3: STRIDE DIVISOR (experimental) =====
+	// Patch stride divisor used in configurePlane's pitch/divisor calculation
+	// WARNING: This requires knowing the exact location where stride divisor is stored
+	// (likely in a local stack variable or controller object). This is highly experimental.
+	
+	FunctionCast(configurePlane, callback->oConfigurePlane)(that, flipArgs);
+
+	if (v406LogCount < 20) {
+		++v406LogCount;
+		SYSLOG("ngreen", "V406[%d]: STRIDE_DIVISOR call#%d | "
+			   "Attempting stride divisor override (experimental) | "
+			   "Incoming tiling=0x%x",
+			   v406LogCount, v406CallCount, incomingTiling);
+	}
+
+	// NOTE: Actual stride divisor patching would require identifying the controller
+	// field or register that holds 0x200 (stride divisor for X-tiled).
+	// This approach is a placeholder—override if you find the divisor location.
+
+#elif defined(V406_APPROACH_DUAL_TILING_STRIDE)
+	// ===== APPROACH 4: DUAL TILING + STRIDE =====
+	// Combine pre-call tiling patch + post-call stride shadow patch
+	
+	uint32_t *tilingField = reinterpret_cast<uint32_t *>(
+		reinterpret_cast<uint8_t *>(flipArgs) + 0x3c);
+	const uint32_t savedTiling = *tilingField;
+	*tilingField = V406_TILING_VALUE;
+
+	FunctionCast(configurePlane, callback->oConfigurePlane)(that, flipArgs);
+
+	*tilingField = savedTiling;
+
+	// Post-call: patch STRIDE shadow
+	if (V406_STRIDE_FORCE_ENABLE && that != nullptr) {
+		uint32_t &strideShadow = getMember<uint32_t>(that, V406_STRIDE_SHADOW_OFFSET);
+		const uint32_t strideBefore = strideShadow;
+		strideShadow = V406_STRIDE_VALUE;
+		
+		if (v406LogCount < 20) {
+			++v406LogCount;
+			SYSLOG("ngreen", "V406[%d]: DUAL_TILING_STRIDE call#%d | "
+				   "Tiling=0x%x STRIDE shadow: 0x%x → 0x%x",
+				   v406LogCount, v406CallCount, V406_TILING_VALUE,
+				   strideBefore, V406_STRIDE_VALUE);
+		}
+	}
+
+#else
+	// ===== APPROACH 5: DIAGNOSTIC PASS-THROUGH =====
+	// No changes—pure logging to see original behavior
+	
+	FunctionCast(configurePlane, callback->oConfigurePlane)(that, flipArgs);
+
+	if (v406LogCount < 20) {
+		++v406LogCount;
+		SYSLOG("ngreen", "V406[%d]: DIAGNOSTIC_ONLY call#%d | "
+			   "Incoming tiling=0x%x (unchanged)",
+			   v406LogCount, v406CallCount, incomingTiling);
+	}
+#endif
+
+	// Always log final state if STRIDE monitoring enabled
+	if (V406_STRIDE_FORCE_ENABLE && that != nullptr && v406LogCount < 20) {
+		uint32_t ctlFinal = getMember<uint32_t>(that, V406_CTL_SHADOW_OFFSET);
+		uint32_t strideFinal = getMember<uint32_t>(that, V406_STRIDE_SHADOW_OFFSET);
+		SYSLOG("ngreen", "V406-final[%d]: CTL@+0x%x=0x%x STRIDE@+0x%x=0x%x",
+			   v406LogCount, V406_CTL_SHADOW_OFFSET, ctlFinal,
+			   V406_STRIDE_SHADOW_OFFSET, strideFinal);
+	}
+}
+
 void Gen11::AppleIntelPlaneupdateRegisterCache(void *that)
 {
 	getMember<void *>(that, 0x90) = ccont;
@@ -2544,7 +2818,7 @@ void Gen11::raWriteRegister32(void *that,unsigned long param_1, UInt32 param_2)
 				#undef R
 			}
 		}
-		// V99R[P] + V99G + linear CTL/STRIDE forces — CORE scanout coherence (!isRealTGL).
+		/*// V99R[P] + V99G + linear CTL/STRIDE forces — CORE scanout coherence (!isRealTGL).
 		// Confirmed load-bearing for visible scanout on spoofed RPL/ADL-P in dp0, dp1, AND
 		// without any -ngreendp* boot arg. Real TGL hardware programs these correctly via
 		// Apple's native code path — gating the entire triad on !isRealTGL.
@@ -2651,7 +2925,7 @@ void Gen11::raWriteRegister32(void *that,unsigned long param_1, UInt32 param_2)
 				NGreen::callback->writeReg32(0x70180, hwCtl & ~(0x7u << 10));
 			if (hwStride != 0xa0)
 				NGreen::callback->writeReg32(0x70188, 0xa0);
-		}
+		}*/
 	}
 
 	if (reinterpret_cast<volatile uint64_t*>(that)==nullptr) return NGreen::callback->writeReg32(param_1,param_2);

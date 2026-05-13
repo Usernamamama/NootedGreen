@@ -1608,6 +1608,21 @@ private:
 	static void setupPipeWatermarks(void *that, void *fb, void *path, void *params);
 	mach_vm_address_t osetupPipeWatermarks {};
 
+	// V405: AppleIntelPlane::configureColorPipeLine(FlipTransactionArgs*, bool)
+	// Dispatches 8/10/12/12SEG gamma pipeline from a BPC selector in FlipTransactionArgs.
+	// Logs GAMMA_MODE (0x4A480) and PIPE_MISC (0x70030) pre/post to confirm correct
+	// Display 13 values on ADL-P.  Gated on !isRealTGL.
+	static void configureColorPipeLine(void *that, void *flipArgs, bool param_2);
+	mach_vm_address_t oConfigureColorPipeLine {};
+
+	// V406: AppleIntelPlane::configurePlane(FlipTransactionArgs*)
+	// Origin-level linear tiling fix: patch FlipTransactionArgs+0x3c tiling enum to 2
+	// (neither X-tiled=0 nor Y-tiled=1) so Apple computes PLANE_CTL bits[12:10]=000
+	// (linear) and PLANE_STRIDE = pitch_bytes/512 = 0x14. Physical pages are CPU-written
+	// linearly; forcing this here ensures the display engine fetches scanlines correctly.
+	static void configurePlane(void *that, void *flipArgs);
+	mach_vm_address_t oConfigurePlane {};
+
 	static void  disablePowerWellPG(void *that,uint param_1);
 	mach_vm_address_t odisablePowerWellPG {};
 	
