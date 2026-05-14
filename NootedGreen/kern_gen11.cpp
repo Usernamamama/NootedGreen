@@ -3403,6 +3403,44 @@ void Gen11::hwInitializeCState(AppleIntel::AppleIntelBaseController *that)
 	SYSLOG("ngreen", "hwInitCState: done");
 }
 
+void NGreen::adlpDcExit(const char *caller) {
+	if (!dmcIsAdlp) return;
+	const uint32_t dcState = readReg32(0x45504); // DC_STATE_EN
+	if (dcState == 0) return;
+	static int adlpDcExitCount = 0;
+	if (adlpDcExitCount < 48) {
+		adlpDcExitCount++;
+		SYSLOG("ngreen", "adlpDcExit[%s/%d]: DC_STATE_EN=0x%x — restoring ADL-P display state", caller, adlpDcExitCount, dcState);
+	}
+	// 1. Disable DC states so clock-gated blocks latch the writes below.
+	writeReg32(0x45504, 0);
+	// 2. Restore power wells (request enable on CTL1/2/3/4 + AUX A/B + DDI A/B).
+	writeReg32(0x45400, uefiCtl1 | 0x401u);  // PWR_WELL_CTL1
+	writeReg32(0x45404, 0x0C03u);             // PWR_WELL_CTL2
+	writeReg32(0x45408, 0x40000000u);         // PWR_WELL_CTL3
+	writeReg32(0x4540C, 0x401u);              // PWR_WELL_CTL4
+	writeReg32(0x45440, 0x3u);               // ICL_PWR_WELL_CTL_AUX1 — AUX A
+	writeReg32(0x45444, 0x3u);               // ICL_PWR_WELL_CTL_AUX2 — AUX B
+	writeReg32(0x45450, 0x3u);               // ICL_PWR_WELL_CTL_DDI1 — DDI A
+	writeReg32(0x45454, 0x3u);               // ICL_PWR_WELL_CTL_DDI2 — DDI B
+	// 3. Restore ADL-P display engine context registers (saved by DMC on DC entry).
+	writeReg32(0x8F074, 0x00086FC0u);
+	writeReg32(0x8F034, 0xC003B400u);
+	writeReg32(0x8F004, 0x01240108u);
+	writeReg32(0x8F038, 0xC003B200u);
+	writeReg32(0x8F008, 0x4FE44F98u);
+	writeReg32(0x8F03C, 0xC003B300u);
+	writeReg32(0x8F00C, 0x571056C0u);
+	// 4. Restore panel power sequencer.
+	writeReg32(0xC7204, 0x67u);  // PP_CONTROL
+	// 5. Disable PSR — DMC may have re-enabled it on DC exit.
+	writeReg32(0x60800, 0u);   // EDP_PSR_CTL (TGL)
+	writeReg32(0x60A10, 0u);   // EDP_PSR2_CTL (TGL)
+	if (adlpDcExitCount <= 48) {
+		SYSLOG("ngreen", "adlpDcExit[%s]: restore complete", caller);
+	}
+}
+
 void Gen11::AppleIntelPowerWellinit(AppleIntel::AppleIntelPowerWell *that, AppleIntel::AppleIntelBaseController *param_1)
 {
 	ccont = param_1->unk_0C40;
@@ -3704,6 +3742,10 @@ uint8_t Gen11::hwRegsNeedUpdate
 		   const IODetailedTimingInformationV2 *param_4,
 		   AppleIntel::SCALERPARAMS *param_5)
 {
+	// ADL-P DC exit: restore power wells and context before Apple writes registers.
+	if (NGreen::callback->dmcIsAdlp)
+		NGreen::callback->adlpDcExit("hwRNU");
+
 	// param_3 is the pending CRTCParams built by SetupParams.
 	if (!NGreen::callback->isRealTGL && param_3) {
 		auto *params = param_3;
@@ -6435,10 +6477,8 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 		// when non-zero so we can see when Apple's DMC actually wants to enter a DC
 		// state. With V103 raWriteRegister32-side and V103F FastWrite-side also off,
 		// this is the full "no DC_STATE_EN block" experiment.
-		if (NGreen::callback->dmcIsAdlp && dcState != 0) {
-			SYSLOG("ngreen", "V103Pp[%d]: DC_STATE_EN=0x%x observed (V103P hack removed)",
-			       v60Count, dcState);
-		}
+		if (NGreen::callback->dmcIsAdlp && dcState != 0)
+			NGreen::callback->adlpDcExit("V60");
 		// V105: Pipe-A gamma LUT enforcement — write linear pass-through when LUT is bad.
 		// The Apple driver enables precision gamma mode before WindowServer writes the actual
 		// LUT.  Two bad states are observed:

@@ -282,6 +282,7 @@ class NGreen {
     bool isGen8LPDerivative = false;
     bool isRealTGL = false;  // true if CPU is genuine TGL (model 0x8C/0x8D), false if spoofed (RPL/ADL)
     bool dmcIsAdlp = false;    // true when ADL-P DMC blob was loaded in hwInitializeCState
+    void adlpDcExit(const char *caller);
     uint32_t uefiCtl1 {0};    // UEFI-read PWR_WELL CTL1 value saved in hwInitializeCState
     uint32_t cpuModel {0};  // full display model (family_model)
     uint32_t deviceId {0};
