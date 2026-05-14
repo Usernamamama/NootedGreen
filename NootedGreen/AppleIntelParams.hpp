@@ -190,15 +190,28 @@ static_assert(sizeof(LinkConfig) == 0x80, "LinkConfig size");
 //   auto *mmio = getMember<void *>(ctrl, offsetof(AppleIntelBaseController, fMMIO));
 // ---------------------------------------------------------------------------
 
-// struct AppleIntelPowerWell -- PCode-discovered from AppleIntelPowerWell::init, 1 access site, ~0x20 bytes
-// Minimal layout; run extract_apple_params.py after annotating enable/disable/isEnabled in Ghidra
-// to recover fController, fIndex, fEnabled, fSupported fields.
+// struct AppleIntelPowerWell — layout from Ghidra decomp of AppleIntelPowerWell::init (TGL kext).
+// Registers read during init: 0x45404 (PG), 0x45454 (DDI), 0x45444 (AUX).
+// Each fPG/fDDI/fAUX slot is 1 = enabled, 2 = overridden (always-on), 0 = disabled.
 struct AppleIntelPowerWell {
-    uint8_t        _pad_0000[0x18];       // +0x00..+0x17  TBD
-    uint32_t       unk_0018;              // +0x18
-    uint8_t        _pad_001C[0x4];        // trailing
+    uint8_t             _pad_0000[0x10];    // +0x00..+0x0F  vtable + padding
+    void               *fController;        // +0x10  AppleIntelBaseController* (8 bytes)
+    uint8_t             fAlwaysOn;          // +0x18  1 = overridePowerWellsState called at init end
+    uint8_t             _pad_0019[3];       // +0x19..+0x1B  alignment
+    uint32_t            fPGBase;            // +0x1C  base PG (always 1 after init)
+    uint32_t            fPG1;              // +0x20  PG1 state  (reg 0x45404 bit 0)
+    uint32_t            fPG2;              // +0x24  PG2 state  (reg 0x45404 bit 2)
+    uint32_t            fPG3;              // +0x28  PG3 state  (reg 0x45404 bit 4)
+    uint32_t            fPG4;              // +0x2C  PG4 state  (reg 0x45404 bit 6)
+    uint32_t            fDDI[9];           // +0x30..+0x53  DDI A/B/C/TC1-TC6  (reg 0x45454)
+    uint32_t            fAUX[9];           // +0x54..+0x77  AUX A/B/C/TBT1-TBT6 (reg 0x45444)
+    void               *fMMIO;             // +0x78  = fController->unk_0C40 (MMIO accessor = ccont)
 };
-// NOTE: total size is a lower bound; extend once the real sizeof() is known from Ghidra.
+static_assert(__builtin_offsetof(AppleIntelPowerWell, fAlwaysOn)  == 0x18, "AppleIntelPowerWell.fAlwaysOn");
+static_assert(__builtin_offsetof(AppleIntelPowerWell, fPGBase)    == 0x1C, "AppleIntelPowerWell.fPGBase");
+static_assert(__builtin_offsetof(AppleIntelPowerWell, fDDI)       == 0x30, "AppleIntelPowerWell.fDDI");
+static_assert(__builtin_offsetof(AppleIntelPowerWell, fAUX)       == 0x54, "AppleIntelPowerWell.fAUX");
+static_assert(__builtin_offsetof(AppleIntelPowerWell, fMMIO)      == 0x78, "AppleIntelPowerWell.fMMIO");
 
 // struct AppleIntelBaseController -- PCode-discovered from AppleIntelBaseController::init, 21 access sites, ~0x1B28 bytes
 struct AppleIntelBaseController {

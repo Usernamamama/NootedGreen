@@ -1472,8 +1472,11 @@ private:
 	mach_vm_address_t owrapReadRegister32 {};
 	
 	// Sleep/wake transition hooks
+	static void prepareToExitWake(AppleIntel::AppleIntelFramebuffer *that);
 	mach_vm_address_t oprepareToExitWake {};
+	static void prepareToExitSleep(AppleIntel::AppleIntelFramebuffer *that);
 	mach_vm_address_t oprepareToExitSleep {};
+	static void prepareToEnterSleep(AppleIntel::AppleIntelFramebuffer *that);
 	mach_vm_address_t oprepareToEnterSleep {};
 	
 	static void hwInitializeCState(AppleIntel::AppleIntelBaseController *that);
@@ -1983,7 +1986,7 @@ private:
 	static uint8_t disableVDDForAux(void *that);
 	mach_vm_address_t odisableVDDForAux {};
 
-	static void  prepareToEnterWake(void *that);
+	static void prepareToEnterWake(AppleIntel::AppleIntelFramebuffer *that);
 	mach_vm_address_t oprepareToEnterWake {};
 	
 public:

@@ -542,11 +542,13 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 			{"__ZN31AppleIntelRegisterAccessManager14ReadRegister32EPVvm",raReadRegister32b},*/
 			{"__ZN31AppleIntelRegisterAccessManager15WriteRegister32Emj",raWriteRegister32, this->oraWriteRegister32},
 			{"__ZN31AppleIntelRegisterAccessManager15WriteRegister32EPVvmj",raWriteRegister32b},
-			//{"__ZN21AppleIntelFramebuffer17prepareToExitWakeEv",releaseDoorbell},
-			//{"__ZN21AppleIntelFramebuffer18prepareToEnterWakeEv",releaseDoorbell},
-			//{"__ZN21AppleIntelFramebuffer18prepareToExitSleepEv",releaseDoorbell},
-			//{"__ZN21AppleIntelFramebuffer19prepareToEnterSleepEv",releaseDoorbell},
-			//{"__ZN24AppleIntelBaseController15enableVDDForAuxEP14AppleIntelPort", releaseDoorbell},
+			// V410: hook sleep/wake transition methods to intercept panel state tracking.
+			// Apple's implementations are known to corrupt WS state on RPL/ADL on resume.
+			{"__ZN21AppleIntelFramebuffer17prepareToExitWakeEv",   prepareToExitWake,   this->oprepareToExitWake},
+			{"__ZN21AppleIntelFramebuffer18prepareToEnterWakeEv",  prepareToEnterWake,  this->oprepareToEnterWake},
+			{"__ZN21AppleIntelFramebuffer18prepareToExitSleepEv",  prepareToExitSleep,  this->oprepareToExitSleep},
+			{"__ZN21AppleIntelFramebuffer19prepareToEnterSleepEv", prepareToEnterSleep, this->oprepareToEnterSleep},
+			{"__ZN24AppleIntelBaseController15enableVDDForAuxEP14AppleIntelPort", releaseDoorbell},
 			// Keep native SST timing setup; forcing custom clocks can break CoreDisplay validation.
 			//{"__ZN24AppleIntelBaseController17SetupDPSSTTimingsEP21AppleIntelFramebufferP21AppleIntelDisplayPathP10CRTCParams", SetupDPSSTTimings, this->oSetupDPSSTTimings},
 			//{"__ZN24AppleIntelBaseController12SetupTimingsEP21AppleIntelFramebufferP21AppleIntelDisplayPathPK29IODetailedTimingInformationV2P10CRTCParams", SetupTimings, this->oSetupTimings},
@@ -3378,8 +3380,111 @@ void Gen11::hwInitializeCState(AppleIntel::AppleIntelBaseController *that)
 
 void Gen11::AppleIntelPowerWellinit(AppleIntel::AppleIntelPowerWell *that, AppleIntel::AppleIntelBaseController *param_1)
 {
+	// Capture MMIO accessor before callthrough (param_1+0xC40 = fMMIO, stored at that+0x78).
 	ccont = param_1->unk_0C40;
-	FunctionCast(AppleIntelPowerWellinit, callback->oAppleIntelPowerWellinit)(that,param_1);
+
+	// Log what UEFI left enabled in the three power well control registers.
+	// This fires once at kext load and tells us the hardware's initial state.
+	//uint32_t pg  = raReadRegister32(ccont, 0x45404);
+	//uint32_t ddi = raReadRegister32(ccont, 0x45454);
+	//uint32_t aux = raReadRegister32(ccont, 0x45444);
+	//SYSLOG("ngreen", "PowerWell::init UEFI state — PG=0x%08x DDI=0x%08x AUX=0x%08x", pg, ddi, aux);
+
+	FunctionCast(AppleIntelPowerWellinit, callback->oAppleIntelPowerWellinit)(that, param_1);
+
+	// Apple only sets fAlwaysOn if controller flags at +0x918 or +0xC59 are set.
+	// Those flags are never set on RPL/ADL, so fAlwaysOn stays 0 and Apple is free
+	// to disable power wells at runtime.  Force it to 1 so that any subsequent
+	// overridePowerWellsState call locks them always-on.
+	// Also re-stamp fMMIO = ccont as belt-and-suspenders; the callthrough should have
+	// done this but our ccont is the authoritative value captured before the call.
+	if (!NGreen::callback->isRealTGL) {
+		that->fAlwaysOn = 1;
+		that->fMMIO     = ccont;
+		SYSLOG("ngreen", "PowerWell::init forced fAlwaysOn=1, fMMIO stamped");
+	}
+	SYSLOG("ngreen", "PowerWell::init done — PG1=%u PG2=%u PG3=%u PG4=%u DDI[0]=%u AUX[0]=%u",
+		   that->fPG1, that->fPG2, that->fPG3, that->fPG4, that->fDDI[0], that->fAUX[0]);
+}
+
+// ─── Sleep/wake lifecycle hooks ──────────────────────────────────────────────
+// All four Apple implementations set this+0x49e0=4 as their final operation.
+// If Apple's code exits early (null Camellia ptr, lock contention, etc.) that
+// write never happens and the FB state machine is stuck.  We callthrough and
+// then enforce state=4 regardless, plus track panel power for IOKit properties.
+//
+// Lifecycle order:
+//   Sleep: prepareToEnterSleep → prepareToExitWake
+//   Wake:  prepareToExitSleep  → prepareToEnterWake
+
+// Wake stage 2: confirm panel is on, log state.
+// Apple does: panel-power property, some vtable dispatch, then state=4.
+void Gen11::prepareToEnterWake(AppleIntel::AppleIntelFramebuffer *that)
+{
+	uint32_t state_before = getMember<uint32_t>(that, 0x49e0);
+	DBGLOG("ngreen", "prepareToEnterWake enter: fb=%p state=0x%x", that, state_before);
+	bool panelOn = isPanelPowerOn(getMember<void *>(that, 0x1d0));
+	if (panelOn) {
+		reinterpret_cast<IORegistryEntry *>(that)->setProperty("AAPL,LCD-PowerState-ON", true);
+	}
+	FunctionCast(prepareToEnterWake, callback->oprepareToEnterWake)(that);
+	uint32_t state_after = getMember<uint32_t>(that, 0x49e0);
+	if (state_after != 4) {
+		SYSLOG("ngreen", "prepareToEnterWake: state=0x%x (expected 4), forcing", state_after);
+		getMember<uint32_t>(that, 0x49e0) = 4;
+	}
+	DBGLOG("ngreen", "prepareToEnterWake exit: state=0x%x", getMember<uint32_t>(that, 0x49e0));
+}
+
+// Sleep stage 2: NVRAM save, Camellia backlight off, StopTransactions,
+// disableDisplay, hwSetPanelPower(0), two handleEvent calls, then state=4.
+void Gen11::prepareToExitWake(AppleIntel::AppleIntelFramebuffer *that)
+{
+	uint32_t state_before = getMember<uint32_t>(that, 0x49e0);
+	DBGLOG("ngreen", "prepareToExitWake enter: fb=%p state=0x%x", that, state_before);
+	reinterpret_cast<IORegistryEntry *>(that)->setProperty("AAPL,LCD-PowerState-ON", false);
+	FunctionCast(prepareToExitWake, callback->oprepareToExitWake)(that);
+	uint32_t state_after = getMember<uint32_t>(that, 0x49e0);
+	if (state_after != 4) {
+		SYSLOG("ngreen", "prepareToExitWake: state=0x%x (expected 4), forcing", state_after);
+		getMember<uint32_t>(that, 0x49e0) = 4;
+	}
+	DBGLOG("ngreen", "prepareToExitWake exit: state=0x%x", getMember<uint32_t>(that, 0x49e0));
+}
+
+// Sleep stage 1: fSleeping=1, cancel timers, clientNotify(2,0), state=4,
+// handleEvent(sleep), hwSaveState, hwDisableInterrupts, fGPUIsAwake=0.
+void Gen11::prepareToEnterSleep(AppleIntel::AppleIntelFramebuffer *that)
+{
+	uint32_t state_before = getMember<uint32_t>(that, 0x49e0);
+	DBGLOG("ngreen", "prepareToEnterSleep enter: fb=%p state=0x%x", that, state_before);
+	reinterpret_cast<IORegistryEntry *>(that)->setProperty("AAPL,LCD-PowerState-ON", false);
+	FunctionCast(prepareToEnterSleep, callback->oprepareToEnterSleep)(that);
+	uint32_t state_after = getMember<uint32_t>(that, 0x49e0);
+	if (state_after != 4) {
+		SYSLOG("ngreen", "prepareToEnterSleep: state=0x%x (expected 4), forcing", state_after);
+		getMember<uint32_t>(that, 0x49e0) = 4;
+	}
+	DBGLOG("ngreen", "prepareToEnterSleep exit: state=0x%x", getMember<uint32_t>(that, 0x49e0));
+}
+
+// Wake stage 1: restorePowerWellsState, hwEnableInterrupts, hwInitializeCState,
+// hwRestoreState, probePortState per port, gamma/reg-cache restore,
+// clientNotify(2,1), handleEvent(wake), fGPUIsAwake=1, setDPPowerState, state=4.
+void Gen11::prepareToExitSleep(AppleIntel::AppleIntelFramebuffer *that)
+{
+	uint32_t state_before = getMember<uint32_t>(that, 0x49e0);
+	DBGLOG("ngreen", "prepareToExitSleep enter: fb=%p state=0x%x", that, state_before);
+	FunctionCast(prepareToExitSleep, callback->oprepareToExitSleep)(that);
+	uint32_t state_after = getMember<uint32_t>(that, 0x49e0);
+	if (state_after != 4) {
+		SYSLOG("ngreen", "prepareToExitSleep: state=0x%x (expected 4), forcing", state_after);
+		getMember<uint32_t>(that, 0x49e0) = 4;
+	}
+	// fGPUIsAwake is at controller + 0x1a00 offset ((&DAT_00001a00)[ctrl]).
+	// Apple sets it to 1 inside the callthrough; we track panel as on after wake.
+	reinterpret_cast<IORegistryEntry *>(that)->setProperty("AAPL,LCD-PowerState-ON", true);
+	DBGLOG("ngreen", "prepareToExitSleep exit: state=0x%x", getMember<uint32_t>(that, 0x49e0));
 }
 
 bool Gen11::AppleIntelBaseControllerstart(AppleIntel::AppleIntelBaseController *that, IOService *param_1)
@@ -8386,18 +8491,6 @@ uint8_t Gen11::disableVDDForAux(void *that)
 		r->setProperty("AAPL,LCD-PowerState-ON", false);
 	}
 	return FunctionCast(disableVDDForAux, callback->odisableVDDForAux)(that);
-};
-
-void  Gen11::prepareToEnterWake(void *that)
-{
-	
-	bool Var5 = isPanelPowerOn(getMember<void *>(that, 0x1d0));
-	if (Var5) {
-		IORegistryEntry *r= (IORegistryEntry *)that;
-		r->setProperty("AAPL,LCD-PowerState-ON", true);
-	}
-	FunctionCast(prepareToEnterWake, callback->oprepareToEnterWake)(that);
-	
 };
 
 void Gen11::setPanelPowerState(void *that,bool param_1)
