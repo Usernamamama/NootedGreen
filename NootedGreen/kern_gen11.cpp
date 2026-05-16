@@ -4200,10 +4200,12 @@ void *Gen11::createUserGPUTask(void *that)
 		if (taskCtx)
 			return taskCtx;
 
-		// param_1=true required: getBlit3DContext only allocates the context when true.
-		// With false it only reads task+0x298 — NULL until a true-call creates it.
-		// (decompiled: `if ((task+0x298 == NULL) && param_1) { alloc+initWithOptions; }`)
-		void *ctx = callback->getBlit3DContext(task, true);
+		// Read task+0x298 directly — that's where getBlit3DContext(task,true) stores the
+		// allocated context when Apple's driver naturally calls it. Calling getBlit3DContext
+		// with true ourselves triggers initWithOptions too early (before GPU memory is ready)
+		// causing a boot hang. Apple's call happens later; null here is safe — all callers
+		// of ensureTaskContext that dereference +0xb8 already have null guards.
+		void *ctx = getMember<void *>(task, 0x298);
 		if (!ctx)
 			return nullptr;
 
@@ -4270,10 +4272,12 @@ void *Gen11::igAccelTaskWithOptions(void *that)
 		if (taskCtx)
 			return taskCtx;
 
-		// param_1=true required: getBlit3DContext only allocates the context when true.
-		// With false it only reads task+0x298 — NULL until a true-call creates it.
-		// (decompiled: `if ((task+0x298 == NULL) && param_1) { alloc+initWithOptions; }`)
-		void *ctx = callback->getBlit3DContext(task, true);
+		// Read task+0x298 directly — that's where getBlit3DContext(task,true) stores the
+		// allocated context when Apple's driver naturally calls it. Calling getBlit3DContext
+		// with true ourselves triggers initWithOptions too early (before GPU memory is ready)
+		// causing a boot hang. Apple's call happens later; null here is safe — all callers
+		// of ensureTaskContext that dereference +0xb8 already have null guards.
+		void *ctx = getMember<void *>(task, 0x298);
 		if (!ctx)
 			return nullptr;
 
@@ -4333,36 +4337,26 @@ void * Gen11::getBlit3DContext(void *that,bool param_1)
 		return FunctionCast(getBlit3DContext, callback->ogetBlit3DContext)(that, param_1);
 	}
 
-	// V148: blit3d_initialize_scratch_space is now skipped in our initialize hook —
-	// the only crashing step was lockForCPUAccess returning a write-protected GPU VA
-	// followed by memcpy into it. Apple's getBlit3DContext is safe to call again because
-	// our initialize hook (V148) never touches the scratch buffer: it zeros the six
-	// header fields and calls oblit3d_init_ctx directly, which sets ctx+0xb8.
-
-	// Return cached context immediately if valid.
-	// V165: On RPL, ctx+0xb8 is NULL (base-class IGHardwareContext::initWithOptions doesn't
-	// set it for RPL hardware). All callers that dereference ctx+0xb8 are already guarded
-	// with !isRealTGL returns (initBlitUsage V121, markBlitUsage V122, beginCoalescedSegment
-	// V124, barrierSubmission V130). Accept any non-null ctx on RPL.
+	// V165: On RPL, ctx+0xb8 is NULL — base-class initWithOptions doesn't set it for RPL.
+	// All callers that dereference ctx+0xb8 are guarded with !isRealTGL early-returns
+	// (initBlitUsage V121, markBlitUsage V122, beginCoalescedSegment V124, barrierSubmission V130).
+	// Accept any non-null ctx on RPL.
 	//
-	// V194: Always call Apple's original first. After gpuRestart the GPU is reset and all
-	// context objects are freed/reallocated. Apple's getBlit3DContext(task, true) checks
-	// task+0x298 and returns the current live context for that task. If it returns a
-	// DIFFERENT non-null ctx than our cache, it means restart happened — update the cache.
-	// Only fall back to the stale cache when Apple's original returns null (early init).
-	// V148R: Apple's ring init disables RENDER_COPY_INTR_ENABLE. Without tier-1 enabled,
-	// the GPU's context-creation completion interrupt can't fire and getBlit3DContext times
-	// out waiting for it. V65W at T+2s confirmed: tier-1 is DISABLED after ring init
-	// (logged "RCS0 tier-1 DISABLED (0x1100110) — enabled → 0x1100111") — already too late.
-	// Enable tier-1 HERE, before every call to original, so the interrupt path is live.
-	uint32_t v148r_rcIntrPre = 0;
+	// V194: Always call Apple's original first. After gpuRestart all context objects are
+	// freed/reallocated; original returns the live context for the task. If it returns a
+	// different non-null ctx than our cache, a restart happened — update the cache.
+	// Fall back to cache only when original returns null (early-init window).
+	//
+	// Tier-1 interrupt: ring init disables RENDER_COPY_INTR_ENABLE. Ensure it's set before
+	// each call so the GPU context-creation completion interrupt can fire.
+	uint32_t rcIntrPre = 0;
 	if (!NGreen::callback->isRealTGL) {
-		v148r_rcIntrPre = NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE);
+		rcIntrPre = NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE);
 		uint32_t wantBits = getV65Tier1WantBits(false);
-		if (!(v148r_rcIntrPre & wantBits)) {
-			NGreen::callback->writeReg32(GEN11_RENDER_COPY_INTR_ENABLE, v148r_rcIntrPre | wantBits);
-			SYSLOG("ngreen", "V148R: tier-1 was 0x%x — enabled (0x%x) before getBlit3DContext",
-				   v148r_rcIntrPre, v148r_rcIntrPre | wantBits);
+		if (!(rcIntrPre & wantBits)) {
+			NGreen::callback->writeReg32(GEN11_RENDER_COPY_INTR_ENABLE, rcIntrPre | wantBits);
+			SYSLOG("ngreen", "V148: tier-1 was 0x%x — enabled (0x%x) before getBlit3DContext",
+				   rcIntrPre, rcIntrPre | wantBits);
 		}
 	}
 
@@ -4380,41 +4374,12 @@ void * Gen11::getBlit3DContext(void *that,bool param_1)
 			}
 			return ctx;
 		}
-		uint32_t v148r_err = NGreen::callback->readReg32(ERROR_GEN6);
-		uint32_t v148r_rc  = NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE);
+		uint32_t errReg     = NGreen::callback->readReg32(ERROR_GEN6);
+		uint32_t rcIntrPost = NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE);
 		SYSLOG("ngreen", "V148: getBlit3DContext original returned invalid ctx=%p ctx+0xb8=%p "
 			   "tier1_pre=0x%x tier1_post=0x%x ERROR_GEN6=0x%x",
-			   ctx, b8, v148r_rcIntrPre, v148r_rc, v148r_err);
+			   ctx, b8, rcIntrPre, rcIntrPost, errReg);
 
-		// V148R retry: one-shot sleep+retry on very first failure only.
-		// IMPORTANT: Do NOT repeat this sleep on subsequent calls — getBlit3DContext is called
-		// 9–24 times per session; sleeping 3s each time blocks the display compositor thread
-		// for 27+ seconds, causing repeated visible screen blanks/restarts.
-		static bool v148rSleepDone = false;
-		if (!NGreen::callback->isRealTGL && !v148rSleepDone) {
-			v148rSleepDone = true;
-			SYSLOG("ngreen", "V148R: sleeping 3s then retrying (one-shot, letting ring settle + watchdog run)");
-			IOSleep(3000);
-			// Re-ensure tier-1 is still enabled after the sleep
-			uint32_t rcNow = NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE);
-			uint32_t wantBits = getV65Tier1WantBits(false);
-			if (!(rcNow & wantBits))
-				NGreen::callback->writeReg32(GEN11_RENDER_COPY_INTR_ENABLE, rcNow | wantBits);
-
-			ctx = FunctionCast(getBlit3DContext, callback->ogetBlit3DContext)(that, param_1);
-			b8 = ctx ? getMember<void *>(ctx, 0xb8) : nullptr;
-			if (ctx && (b8 || !NGreen::callback->isRealTGL)) {
-				SYSLOG("ngreen", "V148R: retry SUCCEEDED ctx=%p ctx+0xb8=%p "
-					   "ERROR_GEN6=0x%x tier1=0x%x",
-					   ctx, b8, NGreen::callback->readReg32(ERROR_GEN6),
-					   NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE));
-				callback->v131CachedBlit3DCtx = ctx;
-				return ctx;
-			}
-			SYSLOG("ngreen", "V148R: retry still failed ctx=%p ERROR_GEN6=0x%x tier1=0x%x",
-				   ctx, NGreen::callback->readReg32(ERROR_GEN6),
-				   NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE));
-		}
 	}
 
 	// Apple's original returned null (early init) — fall back to previously cached ctx.
