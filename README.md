@@ -133,6 +133,8 @@ Where:
 
 > **Note:** `-ngreentglwithgfx` is required on Gen11/TGL hardware to load BOTH the TGL framebuffer AND the TGL HW (accelerator) kext. FB-only mode (`-ngreentglfb`) does not allocate per-plane DBUF on Gen11+ — the watermark/DBUF programming pipeline lives in the HW kext (`AppleIntelTGLGraphics.kext`), so without it the display engine fetches from a zero-block DBUF range and produces duplicated/fragmented output. `-ngreendp0 -ngreenv88` are diagnostic flags for the dp0/CPU-compositor investigation path. Remove them for normal operation.
 
+- **Note:** GPU bundles goes to  /Library/GPUBundles
+
 | Arg | Purpose |
 |---|---|
 | `-NGreenDebug` | Enable NootedGreen debug logging |
