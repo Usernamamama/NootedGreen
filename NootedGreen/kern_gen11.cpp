@@ -1599,7 +1599,7 @@ uint64_t Gen11::AppleIntelScalerinit(AppleIntel::AppleIntelScaler *that, uint32_
 uint64_t Gen11::AppleIntelPlaneinit(AppleIntel::AppleIntelPlane *that, uint32_t pipeIndex)
 {
 	auto ret = FunctionCast(AppleIntelPlaneinit, callback->oAppleIntelPlaneinit)(that, pipeIndex);
-	that->fRegCache = reinterpret_cast<AppleIntel::AppleIntelPlaneRegCache *>(ccont);
+	getMember<void *>(that, 0x90) = ccont; // fWriteAccessor — ccont must NOT go to real fRegCache at +0x88
 	return ret;
 }
 
@@ -1611,7 +1611,7 @@ void Gen11::disableScaler(AppleIntel::AppleIntelScaler *that, bool disable)
 
 void Gen11::enablePlane(AppleIntel::AppleIntelPlane *that, bool enable)
 {
-	that->fRegCache = reinterpret_cast<AppleIntel::AppleIntelPlaneRegCache *>(ccont);
+	getMember<void *>(that, 0x90) = ccont; // fWriteAccessor — ccont must NOT go to real fRegCache at +0x88
 	FunctionCast(enablePlane, callback->oenablePlane)(that, enable);
 }
 
@@ -2152,7 +2152,7 @@ void Gen11::configurePlane(AppleIntel::AppleIntelPlane *that, AppleIntel::FlipTr
 
 void Gen11::AppleIntelPlaneupdateRegisterCache(AppleIntel::AppleIntelPlane *that)
 {
-	that->fRegCache = reinterpret_cast<AppleIntel::AppleIntelPlaneRegCache *>(ccont);
+	getMember<void *>(that, 0x90) = ccont; // fWriteAccessor — ccont must NOT go to real fRegCache at +0x88
 	FunctionCast(AppleIntelPlaneupdateRegisterCache, callback->oAppleIntelPlaneupdateRegisterCache)(that);
 }
 
@@ -6975,6 +6975,10 @@ uint32_t Gen11::v85SurfAddr = 0;
 IOBufferMemoryDescriptor *Gen11::v116DummyBuf = nullptr;
 uint64_t Gen11::v116DummyPhys = 0;
 
+// V221: Becomes true when IntelAccelerator::start() returns. Used by wrapWaitForStamp
+// to block CoreDisplay's stamp-3 wait until the GFX interrupt handler is installed.
+volatile bool Gen11::gGfxAccelStartDone = false;
+
 // V54: IRQ watchdog — re-enables Master IRQ if the driver disables it during init.
 // Fires every 2s, up to 5 times (10s total), then stops.
 void Gen11::v54IrqWatchdog(thread_call_param_t param0, thread_call_param_t) {
@@ -7353,7 +7357,11 @@ bool Gen11::start(void *that,void  *param_1)
 	}
 
 	auto ret= FunctionCast(start, callback->ostart)(that,param_1);
-	
+
+	// V221: Signal waitForStamp hook that the GFX interrupt handler is now installed.
+	Gen11::gGfxAccelStartDone = true;
+	SYSLOG("ngreen", "V221: GFX start() complete — gGfxAccelStartDone=true ret=%d", ret);
+
 	// V65: IMMEDIATELY after original start() returns, re-enable RCS0 interrupts.
 	// Apple's init code may have overwritten our pre-start settings.
 	// This is our earliest opportunity after ring activation.

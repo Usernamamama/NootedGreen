@@ -347,6 +347,47 @@ void NGreen::setApertureIfNecessary() {
 	}
 }
 
+// V221: waitForStamp hook — delays CoreDisplay's stamp-3 wait until IntelAccelerator::start()
+// has returned (and thus the GFX interrupt handler is installed). Without this, stamp 3 is
+// submitted during FB init while the GFX kext hasn't started yet; the interrupt fires but sits
+// unserviced for 5s, causing CoreDisplay_CreateDisplayForCGXDisplayDevice to assert.
+static mach_vm_address_t orgWaitForStamp = 0;
+static IOReturn wrapWaitForStamp(void *that, int32_t channel, unsigned int stamp, unsigned int *outStamp) {
+	IOReturn ret = FunctionCast(wrapWaitForStamp, orgWaitForStamp)(that, channel, stamp, outStamp);
+	if (ret != kIOReturnSuccess && !Gen11::gGfxAccelStartDone) {
+		// Stamp timed out before GFX start() completed. The GPU DID execute the ring
+		// (HEAD==TAIL, IPEHR=MI_REPORT_HEAD) but the interrupt handler isn't installed
+		// yet so gpu_stamp was never bumped. Returning success here lets CoreDisplay
+		// proceed, which unblocks IOKit matching so GFX kext can start. GFX's interrupt
+		// handler will then process the pending GT_INTR_DW0 backlog when it installs.
+		// Blocking here causes a deadlock (CoreDisplay stuck → GFX never matches).
+		SYSLOG("ngreen", "V221: stamp(%d,%u) timed out before GFX start — faking success to unblock CoreDisplay",
+			   channel, stamp);
+		if (outStamp) *outStamp = stamp;
+		return kIOReturnSuccess;
+	}
+	return ret;
+}
+
+// V500: IOAccelLegacySurface::set_id_mode(uint32_t id, uint32_t mode) diagnostic hook.
+// Bad-bits mask: 0xff8073c0. Any mode with those bits set returns kIOReturnUnsupported.
+// Logs (id, mode, bad_bits) whenever a failure fires. Read-only — returns original result.
+static mach_vm_address_t orgSetIdMode = 0;
+static IOReturn wrapSetIdMode(void *that, uint32_t id, uint32_t mode) {
+    IOReturn ret = FunctionCast(wrapSetIdMode, orgSetIdMode)(that, id, mode);
+    if (ret != kIOReturnSuccess) {
+        uint32_t badBits  = mode & 0xff8073c0u;
+        uint32_t goodBits = mode & 0x007f8c3fu;
+        static int v500Count = 0;
+        if (v500Count < 32) {
+            ++v500Count;
+            SYSLOG("ngreen", "V500[%d]: set_id_mode FAILED ret=0x%x id=0x%x mode=0x%x "
+                   "bad_bits=0x%x good_bits=0x%x", v500Count, ret, id, mode, badBits, goodBits);
+        }
+    }
+    return ret;
+}
+
 bool NGreen::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
 	if (kextIOAcceleratorFamily2.loadIndex == index) {
 		SYSLOG("NGreen", "IOAccelF2: TEXT 0x%llx size 0x%lx", address, size);
@@ -410,6 +451,29 @@ bool NGreen::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				SYSLOG("ngreen", "V181: IOAF2 lock/unlock resolve failed");
 			}
 		}*/
+
+		// V221: Hook IOAccelEventMachine2::waitForStamp to delay CoreDisplay's stamp-3 wait
+		// until IntelAccelerator::start() has returned and the GFX IRQ handler is installed.
+		RouteRequestPlus wfsRequest[] = {
+			{"__ZN20IOAccelEventMachine212waitForStampEijPj", wrapWaitForStamp, orgWaitForStamp},
+		};
+		if (RouteRequestPlus::routeAll(patcher, index, wfsRequest, address, size)) {
+			SYSLOG("ngreen", "V221: hooked IOAccelEventMachine2::waitForStamp");
+		} else {
+			patcher.clearError();
+			SYSLOG("ngreen", "V221: waitForStamp hook FAILED — symbol not found");
+		}
+
+		// V500: IOAccelLegacySurface::set_id_mode — diagnostic logger.
+		RouteRequestPlus simRequest[] = {
+			{"__ZN20IOAccelLegacySurface11set_id_modeEjj", wrapSetIdMode, orgSetIdMode},
+		};
+		if (RouteRequestPlus::routeAll(patcher, index, simRequest, address, size)) {
+			SYSLOG("ngreen", "V500: hooked IOAccelLegacySurface::set_id_mode");
+		} else {
+			patcher.clearError();
+			SYSLOG("ngreen", "V500: set_id_mode hook FAILED — symbol not found");
+		}
 
 	}  else if (kextIOGraphics.loadIndex == index) {
 		/*
