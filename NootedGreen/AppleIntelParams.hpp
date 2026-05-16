@@ -313,91 +313,105 @@ struct AppleIntelFramebuffer {
 static_assert(__builtin_offsetof(AppleIntelFramebuffer, fController) == 0x1D0, "AppleIntelFramebuffer.fController");
 static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPipeIndex)  == 0x1DC, "AppleIntelFramebuffer.fPipeIndex");
 
-// struct AppleIntelScaler -- layout verified from AppleIntelScaler::init disasm.
+// struct AppleIntelScaler -- layout fully verified from binary disassembly.
+// Methods: init, disableScaler, programPipeScaler all confirm these offsets.
 // init(rdi=this, rsi=IGScalerID):
-//   [+0x18] ← pipe-derived index (0 for pipe-A scalers, 1 for pipe-B/TC)  fPipeScalerSel
-//   [+0x1c] ← IGScalerID parameter (actual scaler index)                  fScalerIndex
-//   [+0x20] ← 0 (fEnabled, BYTE write confirmed)
-//   [+0x28] ← null (fRegCache)
+//   zeroes [+0x10] (fController), sets [+0x18]=pipe sel, [+0x1c]=IGScalerID, [+0x20]=0, [+0x28]=null
+// disableScaler/programPipeScaler: load vtable object from [this+0x28] and call writeReg32.
 struct AppleIntelScaler {
-    uint32_t       fPipeIndex;        // +0x0
-    uint8_t        _pad_0004[0x4];    // +0x4
-    AppleIntelBaseController* fController; // +0x8
-    AppleIntelDisplayPath* fPath;     // +0x10
-    uint32_t       fPipeScalerSel;    // +0x18  [VERIFIED] pipe-derived index (0=A, 1=B/TC)
-    uint32_t       fScalerIndex;      // +0x1c  [VERIFIED] actual IGScalerID passed to init
-    uint8_t        fEnabled;          // +0x20  [VERIFIED] byte, NOT uint32_t
-    uint8_t        _pad_0021[0x7];    // +0x21..+0x27
-    AppleIntelScalerRegCache* fRegCache; // +0x28  [VERIFIED]
-    uint8_t        _pad_0030[0x17];   // +0x30..+0x46
-    uint32_t       unk_0047;          // +0x47
-    uint8_t        _pad_004B[0x5];    // trailing
+    void          *_vtable;                  // +0x00  C++ vtable pointer
+    uint8_t        _pad_0008[0x8];           // +0x08..+0x0F  (parent OSObject fields)
+    AppleIntelBaseController *fController;   // +0x10  [VERIFIED] controller back-ptr (zeroed in init)
+    uint32_t       fPipeScalerSel;           // +0x18  [VERIFIED] pipe-derived sel (0=A, 1=B/TC)
+    uint32_t       fScalerIndex;             // +0x1c  [VERIFIED] IGScalerID passed to init
+    uint8_t        fEnabled;                 // +0x20  [VERIFIED] byte
+    uint8_t        _pad_0021[0x7];           // +0x21..+0x27
+    void          *fWriteAccessor;           // +0x28  [VERIFIED] ccont write-accessor (vtable obj for writeReg32)
+    uint32_t       mmioAddr_0030;            // +0x30  PS_CTRL MMIO address
+    uint32_t       mmioAddr_0034;            // +0x34  PS_WIN_POS MMIO address
+    uint32_t       mmioAddr_0038;            // +0x38  PS_WIN_SZ MMIO address
+    uint32_t       mmioAddr_003C;            // +0x3C
+    uint32_t       mmioAddr_0040;            // +0x40  PS_HPHASE MMIO address
+    uint32_t       shadow_0044;              // +0x44  PS_CTRL shadow
+    uint32_t       shadow_0048;              // +0x48
+    uint32_t       shadow_004C;              // +0x4C
+    uint32_t       shadow_0050;              // +0x50
+    uint32_t       shadow_0054;              // +0x54
 };
-// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
-static_assert(__builtin_offsetof(AppleIntelScaler, fPipeIndex)    == 0x0,  "AppleIntelScaler.fPipeIndex");
-static_assert(__builtin_offsetof(AppleIntelScaler, fController)   == 0x8,  "AppleIntelScaler.fController");
-static_assert(__builtin_offsetof(AppleIntelScaler, fPath)         == 0x10, "AppleIntelScaler.fPath");
+static_assert(__builtin_offsetof(AppleIntelScaler, fController)    == 0x10, "AppleIntelScaler.fController");
 static_assert(__builtin_offsetof(AppleIntelScaler, fPipeScalerSel) == 0x18, "AppleIntelScaler.fPipeScalerSel");
-static_assert(__builtin_offsetof(AppleIntelScaler, fScalerIndex)  == 0x1c, "AppleIntelScaler.fScalerIndex");
-static_assert(__builtin_offsetof(AppleIntelScaler, fEnabled)      == 0x20, "AppleIntelScaler.fEnabled");
-static_assert(__builtin_offsetof(AppleIntelScaler, fRegCache)     == 0x28, "AppleIntelScaler.fRegCache");
+static_assert(__builtin_offsetof(AppleIntelScaler, fScalerIndex)   == 0x1c, "AppleIntelScaler.fScalerIndex");
+static_assert(__builtin_offsetof(AppleIntelScaler, fEnabled)       == 0x20, "AppleIntelScaler.fEnabled");
+static_assert(__builtin_offsetof(AppleIntelScaler, fWriteAccessor) == 0x28, "AppleIntelScaler.fWriteAccessor");
 
-// struct AppleIntelPlane -- layout verified from AppleIntelPlane::init disasm (rbx=this, r14d=IGPlaneID).
+// struct AppleIntelPlane -- layout fully verified from binary disassembly.
+// Methods: enablePlane, setupPlane, updateRegisterCache, configurePlane, disablePlane, updatePlane.
 //
-// Verified offsets from disasm:
-//   [+0x68] null  (Framebuffer back-ptr)       [+0x70] null  (another ptr)
-//   [+0x78] pipeIndex = IGPlaneID/5            [+0x7c] raw IGPlaneID
-//   [+0x80] planeWithinPipe = IGPlaneID%5      [+0x84] fEnabled (BYTE)
-//   [+0x88] fRegCache (confirmed by freePlane reading [this+0x88])
-//   [+0x90] fWriteAccessor (register write accessor ptr)
-//   [+0x100] PLANE_CTL shadow  [+0x104] PLANE_STRIDE shadow  [+0x154] PLANE_COLOR_CTL shadow
+// Verified key offsets:
+//   [+0x68] fController (enablePlane: movq 0x68(%rbx),%rdi — passes to controller methods)
+//   [+0x70] fPath       (setupPlane: movq 0x70(%rbx),%rsi — setupPlaneWatermarks arg)
+//   [+0x78] fPipeIdx_inline = IGPlaneID/5     [+0x7c] fIGPlaneID = raw IGPlaneID
+//   [+0x80] fPlaneIdx_inline = IGPlaneID%5    [+0x84] fEnabled (BYTE)
+//   [+0x88] fRegCache   [+0x90] fWriteAccessor (ccont vtable obj for writeReg32)
+//   [+0x100] PLANE_CTL  [+0x104] PLANE_STRIDE  [+0x154] PLANE_COLOR_CTL (inline shadows)
 //
-// *** HOOK WARNING — ccont writes ***
-// Hooks use getMember<void*>(that, 0x90) to write ccont, NOT that->fRegCache.
-// Reason: writing ccont to the real fRegCache at +0x88 causes a boot hang because
-// Apple's code calls vtable methods on fRegCache as a DSB accessor — ccont is the
-// wrong object type. +0x90 (fWriteAccessor) is where ccont belongs; Apple sets
-// fRegCache at +0x88 correctly via allocatePlane and we must not disturb it.
+// ccont MUST go into fWriteAccessor (+0x90) via getMember — NOT fRegCache (+0x88).
+// Apple sets fRegCache via allocatePlane as a DSB accessor; overwriting it hangs the boot.
 struct AppleIntelPlane {
-    uint32_t       fPipeIndex;        // +0x0   [UNVERIFIED]
-    uint8_t        _pad_0004[0x4];    // +0x4
-    AppleIntelBaseController* fController; // +0x8  [UNVERIFIED]
-    AppleIntelDisplayPath* fPath;     // +0x10
-    uint32_t       fPlaneIndex;       // +0x18  [UNVERIFIED]
-    uint8_t        _pad_001C[0x4C];   // +0x1C..+0x67
-    void          *fFramebuffer;      // +0x68  [VERIFIED]
-    void          *unk_0070;          // +0x70  [VERIFIED]
-    uint32_t       fPipeIdx_inline;   // +0x78  [VERIFIED] IGPlaneID/5
-    uint32_t       fIGPlaneID;        // +0x7C  [VERIFIED]
-    uint32_t       fPlaneIdx_inline;  // +0x80  [VERIFIED] IGPlaneID%5
-    uint8_t        fEnabled;          // +0x84  [VERIFIED] byte
-    uint8_t        _pad_0085[0x3];    // +0x85..+0x87
-    AppleIntelPlaneRegCache* fRegCache; // +0x88  [VERIFIED] — DO NOT write ccont here
-    void          *fWriteAccessor;    // +0x90  [VERIFIED] — ccont goes HERE via getMember
-    uint32_t       mmioAddr_PLANE_CTL;    // +0x98  [VERIFIED]
-    uint32_t       mmioAddr_PLANE_STRIDE; // +0x9C  [VERIFIED]
-    uint8_t        _pad_00A0[0x60];   // +0xA0..+0xFF
-    uint32_t       PLANE_CTL;         // +0x100 [VERIFIED] inline shadow
-    uint32_t       PLANE_STRIDE;      // +0x104 [VERIFIED] inline shadow
-    uint8_t        _pad_0108[0x4C];   // +0x108..+0x153
-    uint32_t       PLANE_COLOR_CTL;   // +0x154 [VERIFIED] inline shadow
-    uint8_t        _pad_0158[0x4C];   // +0x158..+0x1A3
+    void                    *_vtable;              // +0x00  C++ vtable pointer
+    uint8_t                  _pad_0008[0x3a];      // +0x08..+0x41  (parent OSObject/IOObject fields)
+    uint8_t                  fFlag_0042;           // +0x42  bool flag (cmpb $0x1 in setupPlane)
+    uint8_t                  _pad_0043[0x25];      // +0x43..+0x67
+    AppleIntelBaseController *fController;          // +0x68  [VERIFIED] controller back-ptr
+    AppleIntelDisplayPath    *fPath;                // +0x70  [VERIFIED] display path ptr
+    uint32_t                  fPipeIdx_inline;      // +0x78  [VERIFIED] IGPlaneID/5 (pipe index)
+    uint32_t                  fIGPlaneID;           // +0x7c  [VERIFIED] raw absolute plane ID
+    uint32_t                  fPlaneIdx_inline;     // +0x80  [VERIFIED] IGPlaneID%5 (plane within pipe)
+    uint8_t                   fEnabled;             // +0x84  [VERIFIED] byte
+    uint8_t                   _pad_0085[0x3];       // +0x85..+0x87
+    AppleIntelPlaneRegCache  *fRegCache;            // +0x88  [VERIFIED] — DO NOT write ccont here
+    void                    *fWriteAccessor;        // +0x90  [VERIFIED] ccont slot; use getMember to write
+    uint32_t                  mmioAddr_PLANE_CTL;   // +0x98  [VERIFIED] PLANE_CTL MMIO address
+    uint32_t                  mmioAddr_PLANE_STRIDE;// +0x9c  [VERIFIED] PLANE_STRIDE MMIO address
+    uint8_t                   _pad_00A0[0x8];       // +0xA0..+0xA7
+    uint32_t                  mmioAddr_00A8;        // +0xA8  shadow pair → +0x110
+    uint32_t                  mmioAddr_00AC;        // +0xAC  shadow pair → +0x114
+    uint32_t                  mmioAddr_00B0;        // +0xB0  shadow pair → +0x118
+    uint32_t                  mmioAddr_00B4;        // +0xB4  shadow pair → +0x11C
+    uint32_t                  mmioAddr_00B8;        // +0xB8  cursor; shadow → +0x14C (write adds +0x500)
+    uint32_t                  mmioAddr_00BC;        // +0xBC  shadow pair → +0x124
+    uint8_t                   _pad_00C0[0x38];      // +0xC0..+0xF7
+    uint32_t                  mmioAddr_00F8;        // +0xF8  shadow pair → +0x128
+    uint8_t                   _pad_00FC[0x4];       // +0xFC..+0xFF
+    uint32_t                  PLANE_CTL;            // +0x100 [VERIFIED] inline shadow
+    uint32_t                  PLANE_STRIDE;         // +0x104 [VERIFIED] inline shadow
+    uint8_t                   _pad_0108[0x8];       // +0x108..+0x10F
+    uint32_t                  shadow_0110;          // +0x110 shadow for mmioAddr_00A8
+    uint32_t                  shadow_0114;          // +0x114
+    uint32_t                  shadow_0118;          // +0x118
+    uint32_t                  shadow_011C;          // +0x11C
+    uint32_t                  shadow_0120;          // +0x120
+    uint32_t                  shadow_0124;          // +0x124 shadow for mmioAddr_00BC
+    uint32_t                  shadow_0128;          // +0x128 shadow for mmioAddr_00F8
+    uint8_t                   _pad_012C[0x20];      // +0x12C..+0x14B
+    uint32_t                  shadow_014C;          // +0x14C cursor shadow for mmioAddr_00B8
+    uint32_t                  shadow_0150;          // +0x150
+    uint32_t                  PLANE_COLOR_CTL;      // +0x154 [VERIFIED] inline shadow
+    uint8_t                   _pad_0158[0x48];      // +0x158..+0x19F
 };
-// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
-static_assert(__builtin_offsetof(AppleIntelPlane, fController)          == 0x8,   "AppleIntelPlane.fController");
-static_assert(__builtin_offsetof(AppleIntelPlane, fPath)                == 0x10,  "AppleIntelPlane.fPath");
-static_assert(__builtin_offsetof(AppleIntelPlane, fFramebuffer)         == 0x68,  "AppleIntelPlane.fFramebuffer");
-static_assert(__builtin_offsetof(AppleIntelPlane, fPipeIdx_inline)      == 0x78,  "AppleIntelPlane.fPipeIdx_inline");
-static_assert(__builtin_offsetof(AppleIntelPlane, fIGPlaneID)           == 0x7C,  "AppleIntelPlane.fIGPlaneID");
-static_assert(__builtin_offsetof(AppleIntelPlane, fPlaneIdx_inline)     == 0x80,  "AppleIntelPlane.fPlaneIdx_inline");
-static_assert(__builtin_offsetof(AppleIntelPlane, fEnabled)             == 0x84,  "AppleIntelPlane.fEnabled");
-static_assert(__builtin_offsetof(AppleIntelPlane, fRegCache)            == 0x88,  "AppleIntelPlane.fRegCache");
-static_assert(__builtin_offsetof(AppleIntelPlane, fWriteAccessor)       == 0x90,  "AppleIntelPlane.fWriteAccessor");
-static_assert(__builtin_offsetof(AppleIntelPlane, mmioAddr_PLANE_CTL)   == 0x98,  "AppleIntelPlane.mmioAddr_PLANE_CTL");
-static_assert(__builtin_offsetof(AppleIntelPlane, mmioAddr_PLANE_STRIDE)== 0x9C,  "AppleIntelPlane.mmioAddr_PLANE_STRIDE");
-static_assert(__builtin_offsetof(AppleIntelPlane, PLANE_CTL)            == 0x100, "AppleIntelPlane.PLANE_CTL");
-static_assert(__builtin_offsetof(AppleIntelPlane, PLANE_STRIDE)         == 0x104, "AppleIntelPlane.PLANE_STRIDE");
-static_assert(__builtin_offsetof(AppleIntelPlane, PLANE_COLOR_CTL)      == 0x154, "AppleIntelPlane.PLANE_COLOR_CTL");
+static_assert(__builtin_offsetof(AppleIntelPlane, fController)           == 0x68,  "AppleIntelPlane.fController");
+static_assert(__builtin_offsetof(AppleIntelPlane, fPath)                 == 0x70,  "AppleIntelPlane.fPath");
+static_assert(__builtin_offsetof(AppleIntelPlane, fPipeIdx_inline)       == 0x78,  "AppleIntelPlane.fPipeIdx_inline");
+static_assert(__builtin_offsetof(AppleIntelPlane, fIGPlaneID)            == 0x7C,  "AppleIntelPlane.fIGPlaneID");
+static_assert(__builtin_offsetof(AppleIntelPlane, fPlaneIdx_inline)      == 0x80,  "AppleIntelPlane.fPlaneIdx_inline");
+static_assert(__builtin_offsetof(AppleIntelPlane, fEnabled)              == 0x84,  "AppleIntelPlane.fEnabled");
+static_assert(__builtin_offsetof(AppleIntelPlane, fRegCache)             == 0x88,  "AppleIntelPlane.fRegCache");
+static_assert(__builtin_offsetof(AppleIntelPlane, fWriteAccessor)        == 0x90,  "AppleIntelPlane.fWriteAccessor");
+static_assert(__builtin_offsetof(AppleIntelPlane, mmioAddr_PLANE_CTL)    == 0x98,  "AppleIntelPlane.mmioAddr_PLANE_CTL");
+static_assert(__builtin_offsetof(AppleIntelPlane, mmioAddr_PLANE_STRIDE) == 0x9C,  "AppleIntelPlane.mmioAddr_PLANE_STRIDE");
+static_assert(__builtin_offsetof(AppleIntelPlane, PLANE_CTL)             == 0x100, "AppleIntelPlane.PLANE_CTL");
+static_assert(__builtin_offsetof(AppleIntelPlane, PLANE_STRIDE)          == 0x104, "AppleIntelPlane.PLANE_STRIDE");
+static_assert(__builtin_offsetof(AppleIntelPlane, PLANE_COLOR_CTL)       == 0x154, "AppleIntelPlane.PLANE_COLOR_CTL");
 
 // struct FlipTransactionArgs -- verified from configurePlane disasm (r15=this).
 // +0xC..+0x28: ALL float (cvttss2si — rect coordinates, x/y/w/h pairs)

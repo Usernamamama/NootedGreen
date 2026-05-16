@@ -1591,8 +1591,8 @@ void *ccont2;  // AppleIntelBaseController pointer (captured in FBMemMgr_Init)
 uint64_t Gen11::AppleIntelScalerinit(AppleIntel::AppleIntelScaler *that, uint32_t pipeIndex)
 {
 	auto ret = FunctionCast(AppleIntelScalerinit, callback->oAppleIntelScalerinit)(that, pipeIndex);
-	that->fRegCache = reinterpret_cast<AppleIntel::AppleIntelScalerRegCache *>(ccont);
-	that->fPath     = reinterpret_cast<AppleIntel::AppleIntelDisplayPath *>(ccont2);
+	that->fWriteAccessor = ccont;
+	that->fController    = reinterpret_cast<AppleIntel::AppleIntelBaseController *>(ccont2);
 	return ret;
 }
 
@@ -1605,7 +1605,7 @@ uint64_t Gen11::AppleIntelPlaneinit(AppleIntel::AppleIntelPlane *that, uint32_t 
 
 void Gen11::disableScaler(AppleIntel::AppleIntelScaler *that, bool disable)
 {
-	that->fRegCache = reinterpret_cast<AppleIntel::AppleIntelScalerRegCache *>(ccont);
+	that->fWriteAccessor = ccont;
 	FunctionCast(disableScaler, callback->odisableScaler)(that, disable);
 }
 
@@ -1617,7 +1617,7 @@ void Gen11::enablePlane(AppleIntel::AppleIntelPlane *that, bool enable)
 
 void Gen11::programPipeScaler(AppleIntel::AppleIntelScaler *that, AppleIntel::AppleIntelDisplayPath *displayPath)
 {
-	that->fRegCache = reinterpret_cast<AppleIntel::AppleIntelScalerRegCache *>(ccont);
+	that->fWriteAccessor = ccont;
 	FunctionCast(programPipeScaler, callback->oprogramPipeScaler)(that, displayPath);
 }
 
@@ -1650,7 +1650,7 @@ void Gen11::setupPipeScaler(AppleIntel::AppleIntelScaler *that, AppleIntel::Appl
 {
 	// ccont fixup (same as programPipeScaler) — needed because V204 init hooks
 	// don't always populate ccont; original would crash on this=NULL ccont path.
-	that->fRegCache = reinterpret_cast<AppleIntel::AppleIntelScalerRegCache *>(ccont);
+	that->fWriteAccessor = ccont;
 
 	// Pre-call snapshot — captures values BEFORE setupPipeScaler runs so we can
 	// tell whether THIS function sets PIPE_SEAM_EXCESS=0x1 or whether something
@@ -1666,7 +1666,7 @@ void Gen11::setupPipeScaler(AppleIntel::AppleIntelScaler *that, AppleIntel::Appl
 			pre_hphase = params->PS_HPHASE;
 		}
 		if (that != nullptr) {
-			auto *base = reinterpret_cast<uint8_t *>(that->fPath);
+			auto *base = reinterpret_cast<uint8_t *>(that->fController);
 			if (base != nullptr) {
 				have_base    = true;
 				pre_gate1E3  = base[0x1E3];
@@ -2158,7 +2158,7 @@ void Gen11::AppleIntelPlaneupdateRegisterCache(AppleIntel::AppleIntelPlane *that
 
 void Gen11::AppleIntelScalerupdateRegisterCache(AppleIntel::AppleIntelScaler *that)
 {
-	that->fRegCache = reinterpret_cast<AppleIntel::AppleIntelScalerRegCache *>(ccont);
+	that->fWriteAccessor = ccont;
 	FunctionCast(AppleIntelScalerupdateRegisterCache, callback->oAppleIntelScalerupdateRegisterCache)(that);
 }
 
@@ -7225,19 +7225,37 @@ bool Gen11::start(void *that,void  *param_1)
 	{
 		uint32_t errPreStart = NGreen::callback->readReg32(ERROR_GEN6);
 		SYSLOG("ngreen", "Pre-start ERROR_GEN6=0x%x", errPreStart);
-		
-		// V55: Clear stale errors BEFORE start() so the driver's internal
-		// initialization doesn't see HARDWARE_ERROR/PAGE_TABLE_ERROR and abort.
-		if (errPreStart) {
-			NGreen::callback->writeReg32(ERROR_GEN6, errPreStart);  // W1C
-			IODelay(100);
-			// Also clear per-engine error registers
+
+		// V55: Full TLB flush + 5x clear BEFORE start().
+		// Simple W1C (0x37 -> 0x37 confirmed in log) cannot clear sticky TLB-fault bits.
+		// Post-start V55 proved: TLB invalidation via 0xcee8 + 5x clear succeeds (0x37 -> 0x0).
+		// Moving the same sequence here so Apple's getBlit3DContext sees a clean ERROR_GEN6.
+		// ForceWake is already held at this point (Pre-start ForceWake ACK logged above).
+		if (errPreStart && !NGreen::callback->isRealTGL) {
+			// 1. Invalidate RCS + BCS TLBs (GEN12_GUC_TLB_INV_CR = 0xcee8)
+			NGreen::callback->writeReg32(0xcee8, 0x1);   // RCS TLBs
+			IODelay(500);
+			NGreen::callback->writeReg32(0xcee8, 0x4);   // BCS TLBs
+			IODelay(500);
+			SYSLOG("ngreen", "V55: Pre-start TLB invalidation requested (RCS+BCS)");
+
+			// 2. 5x clear loop — sticky bits release after TLB flush
+			uint32_t errLoop = NGreen::callback->readReg32(ERROR_GEN6);
+			for (int i = 0; i < 5 && errLoop; i++) {
+				NGreen::callback->writeReg32(ERROR_GEN6, errLoop);
+				IODelay(200);
+				errLoop = NGreen::callback->readReg32(ERROR_GEN6);
+			}
+			SYSLOG("ngreen", "V55: Pre-start ERROR_GEN6 after TLB flush + 5x clear = 0x%x", errLoop);
+
+			// 3. Also clear per-engine EIR now that TLBs are flushed
 			uint32_t rcsEir = NGreen::callback->readReg32(RING_EIR(RENDER_RING_BASE));
 			uint32_t bcsEir = NGreen::callback->readReg32(RING_EIR(BLT_RING_BASE));
 			if (rcsEir) NGreen::callback->writeReg32(RING_EIR(RENDER_RING_BASE), rcsEir);
 			if (bcsEir) NGreen::callback->writeReg32(RING_EIR(BLT_RING_BASE), bcsEir);
-			uint32_t errAfter = NGreen::callback->readReg32(ERROR_GEN6);
-			SYSLOG("ngreen", "V55: Pre-start error clear: 0x%x -> 0x%x", errPreStart, errAfter);
+
+			uint32_t tlbStatus = NGreen::callback->readReg32(0xceec);
+			SYSLOG("ngreen", "V55: Pre-start TLB_INV done status = 0x%x", tlbStatus);
 		}
 	}
 	
