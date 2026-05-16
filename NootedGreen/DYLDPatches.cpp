@@ -117,10 +117,16 @@ void DYLDPatches::wrapCsValidatePage(vnode *vp, memory_object_t pager, memory_ob
 		0x2F, 0x45, 0x78, 0x74, 0x65, 0x6E, 0x73, 0x69, // /Extensi
 		0x6F, 0x6E, 0x73, 0x00,                           // ons\0
 	};
+
+	/* Sandbox: WindowServer deny(1) file-map-executable 
+	/Library/Extensions/AppleIntelTGLGraphicsMTLDriver.bundle — 
+	Sandbox blocks WS from mapping the Metal driver as executable. 
+	That's a secondary issue (separate from the kernel-side getBlit3DContext).
+
 	if (UNLIKELY(KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE,
 			gpuPathFind, arrsize(gpuPathFind), gpuPathRepl, arrsize(gpuPathRepl)))) {
 		SYSLOG("DYLD", "V50: Patched gpu_bundle_find_trusted: /Library/GPUBundles -> /Library/Extensions");
-	}
+	}*/
 	
 	// V50: ICL Metal driver device-ID bypass (mask-based, build-portable).
 	// The ICL driver (in shared cache) checks device_id:vendor_id against
