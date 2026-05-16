@@ -28,6 +28,9 @@ Patches Apple's Tiger Lake (Gen12) graphics drivers to work with newer Intel iGP
 
 ### Recent Progress
 
+- **fRegCache/fWriteAccessor boot hang root cause identified and fixed:** `AppleIntelPlane::fRegCache` is at **+0x88** (verified via disasm) — it holds an `AppleIntelPlaneRegCache *` that Apple's code dereferences for vtable DSB accessor dispatch. Writing `ccont` to `fRegCache` causes an immediate hang because `ccont` is the wrong object type (vtable mismatch on DSB method dispatch). The correct ccont slot is `fWriteAccessor` at **+0x90**. All three plane ccont-init hooks in V204 now use `getMember<void *>(that, 0x90) = ccont` instead of `that->fRegCache = …`, leaving Apple's real `fRegCache` pointer untouched. `AppleIntelPlane` struct fully verified: `fEnabled`=+0x84 (byte), `fRegCache`=+0x88, `fWriteAccessor`=+0x90, inline shadows `PLANE_CTL`=+0x100, `PLANE_STRIDE`=+0x104, `PLANE_COLOR_CTL`=+0x154 (all confirmed from disasm).
+- **V221 `waitForStamp` restored:** Routes `IOAccelEventMachine2::waitForStamp` — if a stamp times out before `Gen11::gGfxAccelStartDone` is set (i.e. before `IntelAccelerator::start()` returns), fakes success (`*outStamp = stamp`, return 0) to unblock a CoreDisplay deadlock that occurs when CoreDisplay calls stamp-3 before the GPU accelerator finishes initialising. `gGfxAccelStartDone` is set `true` in the `start()` hook wrapper immediately after the real start returns; from that point stamps are handled natively.
+- **V500 `set_id_mode` diagnostic restored:** Routes `IOAccelLegacySurface::set_id_mode` and logs failures (capped at 32 per boot). On failure, extracts `badBits = mode & 0xff8073c0` and `goodBits = mode & 0x007f8c3f` to identify which reserved mode bits the caller is setting. Pure diagnostic — does not alter return value.
 - **DBUF root cause identified (`-ngreentglwithgfx` required on Gen11+):** Per-plane `DBUF_BUF_CFG_<PIPE>_<PLANE>` allocation lives in the watermark/atomic-commit pipeline that ships with `AppleIntelTGLGraphics.kext` (the HW accelerator kext), not in `AppleIntelTGLGraphicsFramebuffer.kext`. With FB-only mode (`-ngreentglfb`), `DBUF_BUF_CFG_A_PA` stays at `0x00000000` even though `PLANE_CTL` enable bit is set — the display engine fetches from a zero-block DBUF range and produces duplicated/fragmented output (most visible on the boot Apple-logo + loading-bar phase and the login screen). Loading both kexts via `-ngreentglwithgfx` lets Apple's native code program DBUF correctly. V203 register dump (Pipe/Trans/DSC/M-N/DBUF) confirmed `DBUF_BUF_CFG_A_PA = 0` as the smoking gun in the FB-only case.
 - **V204 ccont init hooks re-enabled:** `AppleIntelScaler::init` and `AppleIntelPlane::init` are now routed in the FBT branch so `ccont` is set into `that[+0x28]` / `that[+0x90]` at construction time (matches Visual Ehrmanntraut's working configuration). The per-method ccont patches (`disableScaler` / `enablePlane` / `programPipeScaler` / `updateRegisterCache` / `disableDisplayEngine` / `enableDisplayEngine` / `hwSetPowerWellStateAux/DDI` / `raWriteRegister32b`) remain enabled as belt-and-suspenders for any path that bypasses the constructor.
 - **V204b backlight panel hook re-enabled:** `AppleIntelPanel::setDisplay` route + `F%uT%04x` → `F%uTxxxx` panel-data string patch in `kextBacklight` branch.
@@ -111,12 +114,12 @@ Boot args advised for testing (Hookcase in `/Library/Extensions/` too):
 
 FB-only:
 ```
--v keepsyms=1 debug=0x100 IGLogLevel=8 -ngreentglfb -NGreenDebug -liludbg liludump=220 ngreen-dmc=adlp -ngreenv189
+-v keepsyms=1 debug=0x100 IGLogLevel=8 -ngreentglfb -NGreenDebug liludump=250 msgbuf=725288 liludbuf=725288 ngreen-dmc=adlp -ngreenv189
 ```
 
 FB+GFX:
 ```
--v keepsyms=1 debug=0x100 IGLogLevel=8 -ngreentglwithgfx -NGreenDebug -liludbg liludump=220 ngreen-dmc=adlp -ngreenv189 -allow3d -disablegfxfirmware -ngreenfullmtlcore -ngreenexp -ngreenv60 -ngreenv88
+-v keepsyms=1 debug=0x100 IGLogLevel=8 -ngreentglwithgfx -NGreenDebug liludump=250 msgbuf=725288 liludbuf=725288 ngreen-dmc=adlp -ngreenv189 -allow3d -disablegfxfirmware -ngreenfullmtlcore -ngreenexp -ngreenv60 -ngreenv88
 ```
 
 Where:
@@ -362,8 +365,9 @@ Open `NootedGreen.xcodeproj` and select the **NootedGreen** scheme to build the 
 
 ## Thanks to..
 
-- **Visual Ehrmanntraut** — author of the upstream ChefKiss code this project builds on; ongoing IDA / ccont-init / DBUF / boot-arg guidance
-- [@shl628](https://github.com/lshbluesky) and [@jalavoui](https://github.com/macintelk) — developers of NootedBlue
+- **Visual Ehrmanntraut** — author of the upstream ChefKiss code this project builds on
+- [@shl628](https://github.com/lshbluesky)
+- [@jalavoui](https://github.com/macintelk) — "big jala" developer of NootedBlue
 - **Claude Code** (Claude Opus 4.7 + Claude Sonnet 4.6) — AI pair-programming, code generation, debug analysis
 
 ## License
