@@ -4360,6 +4360,30 @@ void * Gen11::getBlit3DContext(void *that,bool param_1)
 		}
 		SYSLOG("ngreen", "V148: getBlit3DContext original returned invalid ctx=%p ctx+0xb8=%p",
 			   ctx, b8);
+
+		// V148R: if ERROR_GEN6 was non-zero at call time, the ring's TLB hasn't flushed yet.
+		// By ~T+2s the ring starts naturally and auto-clears ERROR_GEN6. Poll here (max 5s),
+		// then retry — the ring is still running (CTL=0x7000) so a fresh submission can succeed.
+		uint32_t errVal = NGreen::callback->readReg32(ERROR_GEN6);
+		if (errVal && !NGreen::callback->isRealTGL) {
+			SYSLOG("ngreen", "V148R: ERROR_GEN6=0x%x at first call — polling for auto-clear (max 5s)", errVal);
+			for (int i = 0; i < 50; i++) {
+				IOSleep(100);
+				if (!NGreen::callback->readReg32(ERROR_GEN6))
+					break;
+			}
+			errVal = NGreen::callback->readReg32(ERROR_GEN6);
+			SYSLOG("ngreen", "V148R: ERROR_GEN6 after poll = 0x%x, retrying getBlit3DContext", errVal);
+
+			ctx = FunctionCast(getBlit3DContext, callback->ogetBlit3DContext)(that, param_1);
+			b8 = ctx ? getMember<void *>(ctx, 0xb8) : nullptr;
+			if (ctx && (b8 || !NGreen::callback->isRealTGL)) {
+				SYSLOG("ngreen", "V148R: retry SUCCEEDED ctx=%p ctx+0xb8=%p", ctx, b8);
+				callback->v131CachedBlit3DCtx = ctx;
+				return ctx;
+			}
+			SYSLOG("ngreen", "V148R: retry still failed ctx=%p — ring may be in teardown state", ctx);
+		}
 	}
 
 	// Apple's original returned null (early init) — fall back to previously cached ctx.
