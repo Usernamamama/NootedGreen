@@ -145,17 +145,16 @@ struct AppleIntelMMIO {
 };
 static_assert(__builtin_offsetof(AppleIntelMMIO, fMMIOBase) == 0x00, "AppleIntelMMIO.fMMIOBase");
 
-// struct AppleIntelPlaneRegCache — shadow copy of plane registers.
+// struct AppleIntelPlaneRegCache — object pointed to by AppleIntelPlane::fRegCache (+0x88).
+//
+// WARNING: PLANE_CTL/PLANE_STRIDE/PLANE_COLOR_CTL at +0x100/+0x104/+0x154 are INLINE
+// fields of AppleIntelPlane itself (verified from init + configurePlane disasm).
+// fRegCache points to a register write accessor (DSB channel); its internal layout is
+// UNVERIFIED. Do NOT use this struct to read/write PLANE_CTL — use getMember on the plane.
 struct AppleIntelPlaneRegCache {
-    uint8_t        _pad_0000[0x100];              // +0x0
-    uint32_t       PLANE_CTL;                     // +0x100
-    uint32_t       PLANE_STRIDE;                  // +0x104
-    uint8_t        _pad_0108[0x4C];               // +0x108
-    uint32_t       PLANE_COLOR_CTL;               // +0x154
+    uint8_t        _opaque[0x158];                // opaque: internal layout unverified
 };
-static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_CTL) == 0x100, "AppleIntelPlaneRegCache.PLANE_CTL");
-static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_STRIDE) == 0x104, "AppleIntelPlaneRegCache.PLANE_STRIDE");
-static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_COLOR_CTL) == 0x154, "AppleIntelPlaneRegCache.PLANE_COLOR_CTL");
+// NOTE: No static_asserts — fields are unverified. Use AppleIntelPlane inline fields instead.
 
 // struct AppleIntelScalerRegCache — shadow copy of pipe-scaler registers.
 // Mirrors the logical SCALERPARAMS register triplet used by setupPipeScaler /
@@ -270,71 +269,78 @@ static_assert(__builtin_offsetof(AppleIntelBaseController, unk_0C40)    == 0xC40
 static_assert(__builtin_offsetof(AppleIntelBaseController, flags_ig)    == 0xC58,  "AppleIntelBaseController.flags_ig");
 static_assert(__builtin_offsetof(AppleIntelBaseController, fInfoFlags2) == 0xC5C,  "AppleIntelBaseController.fInfoFlags2");
 
-// struct AppleIntelDisplayPath -- PCode-discovered from AppleIntelDisplayPath::init, 3 access sites, ~0x32B0 bytes
+// struct AppleIntelDisplayPath -- PCode-discovered from AppleIntelDisplayPath::init, ~0x32B0 bytes
+// Verified field types:
+//   +0x284: uint8_t (byte flag) — confirmed: `cmp byte [rsi+0x284], 0` / `mov byte [rdi+0x284], 1`
+//   +0x32A4: uint8_t (byte flag) — confirmed: `cmp byte [rdx+0x32A4], 0` / `mov byte [rdx+0x32A4], 0/1`
+// PREVIOUSLY WRONG: both were declared uint32_t (PCode tool used dword-read heuristic).
 struct AppleIntelDisplayPath {
-    uint8_t        _pad_0000[0x284]; // +0x0
-    uint32_t       unk_0284; // +0x284
-    uint8_t        _pad_0288[0x301C]; // +0x288
-    uint32_t       unk_32A4; // +0x32A4
-    uint8_t        _pad_32A8[0x8]; // trailing
+    uint8_t        _pad_0000[0x284]; // +0x0..+0x283
+    uint8_t        unk_0284;         // +0x284  [VERIFIED] byte flag
+    uint8_t        _pad_0285[0x301F]; // +0x285..+0x32A3
+    uint8_t        unk_32A4;         // +0x32A4 [VERIFIED] byte flag
+    uint8_t        _pad_32A5[0xB];   // trailing (struct ~0x32B0)
 };
 // NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
 
 
-// struct AppleIntelFramebuffer -- PCode-discovered from AppleIntelFramebuffer::init, 16 access sites, ~0x4B90 bytes
+// struct AppleIntelFramebuffer -- layout verified from AppleIntelFramebuffer::init disasm.
+// init(rdi=this[rbx], rsi=ctrl[r15], rdx=pipeIdx[r14d]):
+//   [+0x1D0] ← ctrl (AppleIntelBaseController*, 8B) — fController  [VERIFIED]
+//   [+0x1D8] ← some byte flag (1B)
+//   [+0x1DC] ← pipeIdx (uint32_t, 4B) — fPipeIndex                 [VERIFIED]
+// PREVIOUSLY WRONG: fController at +0x1A8 and fPipeIndex at +0x1B0 (those belong to
+// other types sharing the kext binary: AppleIntelMEIDriver / CamelliaTcon).
 struct AppleIntelFramebuffer {
-    uint8_t        _pad_0000[0x1A8]; // +0x0
-    AppleIntelBaseController* fController; // +0x1A8
-    uint32_t       fPipeIndex; // +0x1B0
-    uint8_t        _pad_01B4[0x4]; // +0x1B4
-    AppleIntelDisplayPath* fPath; // +0x1B8
-    uint32_t       fPanelPower; // +0x1C0
-    uint8_t        _pad_01C4[0x4]; // +0x1C4
-    uint32_t       fBacklightLevel; // +0x1C8
-    uint8_t        _pad_01CC[0x14]; // +0x1CC
-    uint32_t       unk_01E0; // +0x1E0
-    uint8_t        _pad_01E4[0x4068]; // +0x1E4
-    uint32_t       unk_424C; // +0x424C
-    uint8_t        _pad_4250[0x39]; // +0x4250
-    uint32_t       unk_4289; // +0x4289
-    uint8_t        _pad_428D[0x251]; // +0x428D
-    uint32_t       unk_44DE; // +0x44DE
-    uint8_t        _pad_44E2[0xCA]; // +0x44E2
-    uint32_t       unk_45AC; // +0x45AC
-    uint8_t        _pad_45B0[0x468]; // +0x45B0
-    uint32_t       unk_4A18; // +0x4A18
-    uint8_t        _pad_4A1C[0x170]; // +0x4A1C
-    uint32_t       unk_4B8C; // +0x4B8C
+    uint8_t        _pad_0000[0x1D0];  // +0x0..+0x1CF
+    AppleIntelBaseController* fController; // +0x1D0  [VERIFIED]
+    uint8_t        _pad_01D8[0x4];    // +0x1D8..+0x1DB (byte flag + align)
+    uint32_t       fPipeIndex;        // +0x1DC  [VERIFIED]
+    uint8_t        _pad_01E0[0x406C]; // +0x1E0..+0x424B
+    uint32_t       unk_424C;          // +0x424C
+    uint8_t        _pad_4250[0x39];   // +0x4250
+    uint32_t       unk_4289;          // +0x4289
+    uint8_t        _pad_428D[0x251];  // +0x428D
+    uint32_t       unk_44DE;          // +0x44DE
+    uint8_t        _pad_44E2[0xCA];   // +0x44E2
+    uint32_t       unk_45AC;          // +0x45AC
+    uint8_t        _pad_45B0[0x468];  // +0x45B0
+    uint32_t       unk_4A18;          // +0x4A18
+    uint8_t        _pad_4A1C[0x170];  // +0x4A1C
+    uint32_t       unk_4B8C;          // +0x4B8C
 };
 // NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, fController) == 0x1A8, "AppleIntelFramebuffer.fController");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPipeIndex) == 0x1B0, "AppleIntelFramebuffer.fPipeIndex");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPath) == 0x1B8, "AppleIntelFramebuffer.fPath");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPanelPower) == 0x1C0, "AppleIntelFramebuffer.fPanelPower");
-static_assert(__builtin_offsetof(AppleIntelFramebuffer, fBacklightLevel) == 0x1C8, "AppleIntelFramebuffer.fBacklightLevel");
+static_assert(__builtin_offsetof(AppleIntelFramebuffer, fController) == 0x1D0, "AppleIntelFramebuffer.fController");
+static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPipeIndex)  == 0x1DC, "AppleIntelFramebuffer.fPipeIndex");
 
-// struct AppleIntelScaler -- PCode-discovered from AppleIntelScaler::init, 7 access sites, ~0x50 bytes
+// struct AppleIntelScaler -- layout verified from AppleIntelScaler::init disasm.
+// init(rdi=this, rsi=IGScalerID):
+//   [+0x18] ← pipe-derived index (0 for pipe-A scalers, 1 for pipe-B/TC)  fPipeScalerSel
+//   [+0x1c] ← IGScalerID parameter (actual scaler index)                  fScalerIndex
+//   [+0x20] ← 0 (fEnabled, BYTE write confirmed)
+//   [+0x28] ← null (fRegCache)
 struct AppleIntelScaler {
-    uint32_t       fPipeIndex; // +0x0
-    uint8_t        _pad_0004[0x4]; // +0x4
+    uint32_t       fPipeIndex;        // +0x0
+    uint8_t        _pad_0004[0x4];    // +0x4
     AppleIntelBaseController* fController; // +0x8
-    AppleIntelDisplayPath* fPath; // +0x10
-    uint32_t       fScalerIndex; // +0x18
-    uint8_t        _pad_001C[0x4]; // +0x1C
-    uint32_t       fEnabled; // +0x20
-    uint8_t        _pad_0024[0x4]; // +0x24
-    AppleIntelScalerRegCache* fRegCache; // +0x28
-    uint8_t        _pad_0030[0x17]; // +0x30
-    uint32_t       unk_0047; // +0x47
-    uint8_t        _pad_004B[0x5]; // trailing
+    AppleIntelDisplayPath* fPath;     // +0x10
+    uint32_t       fPipeScalerSel;    // +0x18  [VERIFIED] pipe-derived index (0=A, 1=B/TC)
+    uint32_t       fScalerIndex;      // +0x1c  [VERIFIED] actual IGScalerID passed to init
+    uint8_t        fEnabled;          // +0x20  [VERIFIED] byte, NOT uint32_t
+    uint8_t        _pad_0021[0x7];    // +0x21..+0x27
+    AppleIntelScalerRegCache* fRegCache; // +0x28  [VERIFIED]
+    uint8_t        _pad_0030[0x17];   // +0x30..+0x46
+    uint32_t       unk_0047;          // +0x47
+    uint8_t        _pad_004B[0x5];    // trailing
 };
 // NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
-static_assert(__builtin_offsetof(AppleIntelScaler, fPipeIndex) == 0x0, "AppleIntelScaler.fPipeIndex");
-static_assert(__builtin_offsetof(AppleIntelScaler, fController) == 0x8, "AppleIntelScaler.fController");
-static_assert(__builtin_offsetof(AppleIntelScaler, fPath) == 0x10, "AppleIntelScaler.fPath");
-static_assert(__builtin_offsetof(AppleIntelScaler, fScalerIndex) == 0x18, "AppleIntelScaler.fScalerIndex");
-static_assert(__builtin_offsetof(AppleIntelScaler, fEnabled) == 0x20, "AppleIntelScaler.fEnabled");
-static_assert(__builtin_offsetof(AppleIntelScaler, fRegCache) == 0x28, "AppleIntelScaler.fRegCache");
+static_assert(__builtin_offsetof(AppleIntelScaler, fPipeIndex)    == 0x0,  "AppleIntelScaler.fPipeIndex");
+static_assert(__builtin_offsetof(AppleIntelScaler, fController)   == 0x8,  "AppleIntelScaler.fController");
+static_assert(__builtin_offsetof(AppleIntelScaler, fPath)         == 0x10, "AppleIntelScaler.fPath");
+static_assert(__builtin_offsetof(AppleIntelScaler, fPipeScalerSel) == 0x18, "AppleIntelScaler.fPipeScalerSel");
+static_assert(__builtin_offsetof(AppleIntelScaler, fScalerIndex)  == 0x1c, "AppleIntelScaler.fScalerIndex");
+static_assert(__builtin_offsetof(AppleIntelScaler, fEnabled)      == 0x20, "AppleIntelScaler.fEnabled");
+static_assert(__builtin_offsetof(AppleIntelScaler, fRegCache)     == 0x28, "AppleIntelScaler.fRegCache");
 
 // struct AppleIntelPlane -- PCode-discovered from AppleIntelPlane::init, 6 access sites, ~0x98 bytes
 struct AppleIntelPlane {
@@ -356,21 +362,43 @@ static_assert(__builtin_offsetof(AppleIntelPlane, fPlaneIndex) == 0x18, "AppleIn
 static_assert(__builtin_offsetof(AppleIntelPlane, fEnabled) == 0x84, "AppleIntelPlane.fEnabled");
 static_assert(__builtin_offsetof(AppleIntelPlane, fRegCache) == 0x90, "AppleIntelPlane.fRegCache");
 
-// struct FlipTransactionArgs -- PCode-discovered from FlipTransactionArgs::init, 6 access sites, ~0x40 bytes
+// struct FlipTransactionArgs -- verified from configurePlane disasm (r15=this).
+// +0xC..+0x28: ALL float (cvttss2si — rect coordinates, x/y/w/h pairs)
+// +0x1C was WRONG as BPCSelector — it is a float rect coordinate.
+// BPC is read from PIPE_MISC hardware register [5:3], not from this struct.
 struct FlipTransactionArgs {
-    uint8_t        _pad_0000[0x1C]; // +0x0
-    uint32_t       BPCSelector; // +0x1C
-    uint8_t        _pad_0020[0xC]; // +0x20
-    uint32_t       unk_002C; // +0x2C
-    uint32_t       unk_0030; // +0x30
-    uint8_t        _pad_0034[0x8]; // +0x34
-    uint32_t       TilingEnum; // +0x3C
+    uint32_t       unk_0000;          // +0x0
+    uint8_t        _pad_0004[0x4];    // +0x4..+0x7
+    uint32_t       unk_0008;          // +0x8
+    float          flt_000C;          // +0xC   [VERIFIED float]
+    float          flt_0010;          // +0x10  [VERIFIED float]
+    float          flt_0014;          // +0x14  [VERIFIED float]
+    float          flt_0018;          // +0x18  [VERIFIED float]
+    float          flt_001C;          // +0x1C  [VERIFIED float] — was WRONG as BPCSelector
+    float          flt_0020;          // +0x20  [VERIFIED float]
+    float          flt_0024;          // +0x24  [VERIFIED float]
+    float          flt_0028;          // +0x28  [VERIFIED float]
+    uint32_t       unk_002C;          // +0x2C  bitmask (bits 0,2,4 tested)
+    uint8_t        unk_0030;          // +0x30  byte
+    uint8_t        unk_0031;          // +0x31  byte
+    uint8_t        unk_0032;          // +0x32  byte
+    uint8_t        _pad_0033;         // +0x33  alignment
+    uint32_t       unk_0034;          // +0x34  format/pixel-type ID
+    uint32_t       unk_0038;          // +0x38  enum 0 or 1
+    uint32_t       TilingEnum;        // +0x3C  [VERIFIED] tiling: 0=X-tiled, 1=Y-tiled, 2=linear
+    uint32_t       unk_0040;          // +0x40
+    uint8_t        _pad_0044[0xC];    // +0x44..+0x4F
+    uint32_t       unk_0050;          // +0x50
 };
 // NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
-static_assert(__builtin_offsetof(FlipTransactionArgs, BPCSelector) == 0x1C, "FlipTransactionArgs.BPCSelector");
-static_assert(__builtin_offsetof(FlipTransactionArgs, unk_002C) == 0x2C, "FlipTransactionArgs.unk_002C");
-static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0030) == 0x30, "FlipTransactionArgs.unk_0030");
+static_assert(__builtin_offsetof(FlipTransactionArgs, flt_001C)  == 0x1C, "FlipTransactionArgs.flt_001C");
+static_assert(__builtin_offsetof(FlipTransactionArgs, unk_002C)  == 0x2C, "FlipTransactionArgs.unk_002C");
+static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0030)  == 0x30, "FlipTransactionArgs.unk_0030");
+static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0034)  == 0x34, "FlipTransactionArgs.unk_0034");
+static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0038)  == 0x38, "FlipTransactionArgs.unk_0038");
 static_assert(__builtin_offsetof(FlipTransactionArgs, TilingEnum) == 0x3C, "FlipTransactionArgs.TilingEnum");
+static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0040)  == 0x40, "FlipTransactionArgs.unk_0040");
+static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0050)  == 0x50, "FlipTransactionArgs.unk_0050");
 
 } // namespace AppleIntel
 

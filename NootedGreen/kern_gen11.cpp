@@ -1911,9 +1911,9 @@ void Gen11::configureColorPipeLine(AppleIntel::AppleIntelPlane *that, AppleIntel
 	if (NGreen::callback != nullptr && !NGreen::callback->isRealTGL) {
 		pre_gamma = NGreen::callback->readReg32(0x4A480);  // GAMMA_MODE Pipe A
 		pre_misc  = NGreen::callback->readReg32(0x70030);  // PIPE_MISC  Pipe A
-		// FlipTransactionArgs BPC selector: IDA 'param_1[7].Tiling' = dword at +0x1C
+		// +0x1C is a float rect coordinate, not BPCSelector. Log raw float bits for diagnostic.
 		if (flipArgs != nullptr)
-			sel = static_cast<uint8_t>(flipArgs->BPCSelector);
+			sel = static_cast<uint8_t>(*reinterpret_cast<const uint32_t *>(&flipArgs->flt_001C) >> 24);
 	}
 
 	FunctionCast(configureColorPipeLine, callback->oConfigureColorPipeLine)(that, flipArgs, param_2);
