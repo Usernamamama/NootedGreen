@@ -4361,6 +4361,15 @@ void * Gen11::getBlit3DContext(void *that,bool param_1)
 	}
 
 	if (callback->ogetBlit3DContext) {
+		// V502: log param_1 and task+0x298 before calling original — tells us whether
+		// getBlit3DContext will attempt context creation (param_1=true) or just read cache.
+		void *cached298 = getMember<void *>(that, 0x298);
+		static int v502Count = 0;
+		if (v502Count < 12) {
+			v502Count++;
+			SYSLOG("ngreen", "V502[%d]: getBlit3DContext task=%p param_1=%d cached298=%p",
+				   v502Count, that, (int)param_1, cached298);
+		}
 		void *ctx = FunctionCast(getBlit3DContext, callback->ogetBlit3DContext)(that, param_1);
 		void *b8 = ctx ? getMember<void *>(ctx, 0xb8) : nullptr;
 		if (ctx && (b8 || !NGreen::callback->isRealTGL)) {
@@ -4377,8 +4386,8 @@ void * Gen11::getBlit3DContext(void *that,bool param_1)
 		uint32_t errReg     = NGreen::callback->readReg32(ERROR_GEN6);
 		uint32_t rcIntrPost = NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE);
 		SYSLOG("ngreen", "V148: getBlit3DContext original returned invalid ctx=%p ctx+0xb8=%p "
-			   "tier1_pre=0x%x tier1_post=0x%x ERROR_GEN6=0x%x",
-			   ctx, b8, rcIntrPre, rcIntrPost, errReg);
+			   "tier1_pre=0x%x tier1_post=0x%x ERROR_GEN6=0x%x param_1=%d cached298_pre=%p",
+			   ctx, b8, rcIntrPre, rcIntrPost, errReg, (int)param_1, cached298);
 
 	}
 
@@ -4613,6 +4622,17 @@ uint8_t  Gen11::IGHardwareExtendedContextinitWithOptions(void *that,void *param_
 		return 0;
 	}
 	void *b8pre = getMember<void *>(that, 0xb8);
+	// V502: log ExtendedCtxParams+0x10 (buffer size) and +0x18 (scheduler flag).
+	// From Ghidra: if param_2+0x18==0 → simple buffer alloc path (no GPU cmd).
+	// If param_2+0x18!=0 → GPU command submission via vtable+0x118 (hang source on RPL).
+	uint64_t p2f10 = param_2 ? getMember<uint64_t>(param_2, 0x10) : 0;
+	uint64_t p2f18 = param_2 ? getMember<uint64_t>(param_2, 0x18) : 0;
+	static bool v502iwoLogged = false;
+	if (!v502iwoLogged) {
+		v502iwoLogged = true;
+		SYSLOG("ngreen", "V502: initWithOptions ExtCtxParams=%p +0x10=0x%llx +0x18=0x%llx (0=simple,!=0=GPU-cmd)",
+			   param_2, (unsigned long long)p2f10, (unsigned long long)p2f18);
+	}
 	uint8_t ret = FunctionCast(IGHardwareExtendedContextinitWithOptions, callback->oIGHardwareExtendedContextinitWithOptions)(that,param_1,param_2);
 	void *b8post = getMember<void *>(that, 0xb8);
 	// V115 REMOVED: V115 suppressed initWithOptions to prevent MCE from GGTT[0]→stolen mem.
@@ -5839,12 +5859,13 @@ static void v45DelayedChildCheck(thread_call_param_t p0, thread_call_param_t p1)
 						SYSLOG("ngreen", "V55: accelerator isOpen=%d", svc->isOpen());
 						
 						if (childState == 0) {
-							if (strcmp(childName, "IOAccelDisplayPipeUserClient2") == 0 && isDisplayPipeForceDisabled()) {
-								// dp0 mode: keep display pipe at state=0x0 so it never starts
-								// transaction machinery. Starting it causes stamp-9 timeouts every
-								// ~5.4s (AccessComplete is stubbed → stamp never advances →
-								// GPURestartSignaled → WS compositor briefly interrupted per cycle).
-								SYSLOG("ngreen", "V55: %s at state=0x0 — skip registerService (dp0: prevent stamp-9 timeout loop)", childName);
+							if (strcmp(childName, "IOAccelDisplayPipeUserClient2") == 0) {
+								// Never call registerService on IOAccelDisplayPipeUserClient2.
+								// Starting it triggers stamp-9 timeouts every ~5.4s:
+								// AccessComplete is stubbed → stamp never advances →
+								// GPURestartSignaled → WS compositor interrupted per cycle.
+								// This applies in all modes, not just dp0.
+								SYSLOG("ngreen", "V55: %s at state=0x0 — skip registerService (prevent stamp-9 timeout loop)", childName);
 							} else {
 								SYSLOG("ngreen", "V55: %s at state=0x0 — calling registerService()", childName);
 								child->registerService(kIOServiceAsynchronous);
@@ -9022,6 +9043,34 @@ void Gen11::populateResetRegisterList(void *that)
 			NGreen::callback->readReg32(GEN7_FF_SLICE_CS_CHICKEN1));
 	}
 	FunctionCast(populateResetRegisterList, callback->opopulateResetRegisterList)(that);
+
+	// V503: Dump the exact values Apple just baked into the context reset register list.
+	// Register set decoded from Ghidra decompile of IntelAccelerator::populateResetRegisterList.
+	static bool v503Logged = false;
+	if (!v503Logged && !NGreen::callback->isRealTGL) {
+		v503Logged = true;
+		auto *cb = NGreen::callback;
+		SYSLOG("ngreen", "V503: context register snapshot (19 regs):");
+		SYSLOG("ngreen", "V503:  0x2080 HWS_PGA           = 0x%08x", cb->readReg32(0x2080));
+		SYSLOG("ngreen", "V503:  0x2134 RING_BUFFER_UHPTR = 0x%08x", cb->readReg32(0x2134));
+		SYSLOG("ngreen", "V503:  0x20c0 INSTPM            = 0x%08x", cb->readReg32(0x20c0));
+		SYSLOG("ngreen", "V503:  0x7000 CACHE_MODE_0      = 0x%08x", cb->readReg32(0x7000));
+		SYSLOG("ngreen", "V503:  0x7004 CACHE_MODE_1      = 0x%08x", cb->readReg32(0x7004));
+		SYSLOG("ngreen", "V503:  0x209c MI_MODE           = 0x%08x", cb->readReg32(0x209c));
+		SYSLOG("ngreen", "V503:  0x2090 3D_CHICKEN3       = 0x%08x", cb->readReg32(0x2090));
+		SYSLOG("ngreen", "V503:  0x4090 ECOCHK            = 0x%08x", cb->readReg32(0x4090));
+		SYSLOG("ngreen", "V503:  0x20a0 FF_THREAD_MODE    = 0x%08x", cb->readReg32(0x20a0));
+		SYSLOG("ngreen", "V503:  0x20e4 FF_SLICE_CS_CHKN2 = 0x%08x", cb->readReg32(0x20e4));
+		SYSLOG("ngreen", "V503:  0x9430 UCGCTL6           = 0x%08x", cb->readReg32(0x9430));
+		SYSLOG("ngreen", "V503:  0x7010 CMN_SLICE_CHKN1   = 0x%08x", cb->readReg32(0x7010));
+		SYSLOG("ngreen", "V503:  0x0d08 RCPCONFIG         = 0x%08x", cb->readReg32(0x0d08));
+		SYSLOG("ngreen", "V503:  0xe194 HALF_SLICE_CHKN7  = 0x%08x", cb->readReg32(0xe194));
+		SYSLOG("ngreen", "V503:  0xb004 GARBCNTLREG       = 0x%08x", cb->readReg32(0xb004));
+		SYSLOG("ngreen", "V503:  0x20ec CS_DEBUG_MODE1    = 0x%08x", cb->readReg32(0x20ec));
+		SYSLOG("ngreen", "V503:  0x2580 CS_CHICKEN1       = 0x%08x", cb->readReg32(0x2580));
+		SYSLOG("ngreen", "V503:  0x20e0 FF_SLICE_CS_CHKN1 = 0x%08x", cb->readReg32(0x20e0));
+		SYSLOG("ngreen", "V503:  0x229c RCS_GFX_MODE      = 0x%08x", cb->readReg32(0x229c));
+	}
 }
 
 
@@ -9424,3 +9473,20 @@ void Gen11::endReset(void *that)
 	
 	NGreen::callback->writeReg32( DG1_MSTR_TILE_INTR, DG1_MSTR_IRQ);
 }
+
+//SIGNATURES GFX
+//void __thiscall IntelAccelerator::populateResetRegisterList(IntelAccelerator *this)
+//undefined8 __thiscall IntelAccelerator::createUserGPUTask(IntelAccelerator *this)
+//undefined8 __thiscall IGHardwareExtendedContext::initWithOptions (IGHardwareExtendedContext *this,IGAccelTask *param_1, IGHardwareExtendedContextParams *param_2)
+//IGHardwareExtendedContext * __thiscall IGAccelTask::getBlit3DContext(IGAccelTask *this,bool param_1)
+//undefined8 blit3d_init_ctx(IGHardwareBlit3DContext *param_1)
+//void blit3d_initialize_scratch_space(IGAccelSysMemory *param_1)
+//ulong __thiscall IntelAccelerator::startGraphicsEngine(IntelAccelerator *this)
+//IGAccelTask * IGAccelTask::withOptions(IntelAccelerator *param_1)
+//void __thiscall IGHardwareBlit3DContext::initialize(IGHardwareBlit3DContext *this)
+//undefined8 __thiscall IGHardwareExtendedContext::initWithOptions (IGHardwareExtendedContext *this,IGAccelTask *param_1, IGHardwareExtendedContextParams *param_2)
+//void __thiscall IGAccelSegmentResourceList::initBlitUsage(IGAccelSegmentResourceList *this)
+//ulong IntelAccelerator::submitBlit (blit3d_params_t *param_1,IGVector *param_2,IGAccelTask *param_3,bool param_4)
+//ulong __thiscall IntelAccelerator::start(IntelAccelerator *this,IOService *param_1)
+//void __thiscall IntelAccelerator::getGPUInfo(IntelAccelerator *this)
+//void IntelAccelerator::getGPUInfo(void)

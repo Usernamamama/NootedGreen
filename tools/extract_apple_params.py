@@ -55,6 +55,62 @@ STRUCT_WHITELIST = [
     "AppleIntelMMIO",
     "AppleIntelPlaneRegCache",
     "AppleIntelScalerRegCache",
+    # Accelerator / 3D path structs
+    "IGHardwareExtendedContextParams",
+    "blit3d_params_t",
+    "IGAccelTask",
+    "IGHardwareBlit3DContext",
+    "IGAccelSysMemory",
+    "IGAccelSegmentResourceList",
+    "IntelAccelerator",
+    # Note: IOService and IOGraphicsAccelerator2 are kernel/IOKit base classes —
+    # not defined in the kext binary; Ghidra produces only 1-byte stubs for them.
+]
+
+# ---------------------------------------------------------------------------
+# Function signature validation
+# ---------------------------------------------------------------------------
+# Each entry: (demangled_fragment, expected_mangled_symbol, hook_label)
+# The script finds each function by demangled fragment, reads its actual
+# mangled name from the symbol table, and compares with expected.
+# Run discover_function_signatures() in main() for a validation report.
+SIG_TARGETS = [
+    ("IntelAccelerator::populateResetRegisterList",
+     "__ZN16IntelAccelerator25populateResetRegisterListEv",
+     "populateResetRegisterList"),
+    ("IntelAccelerator::createUserGPUTask",
+     "__ZN16IntelAccelerator17createUserGPUTaskEv",
+     "createUserGPUTask"),
+    ("IGHardwareExtendedContext::initWithOptions",
+     "__ZN25IGHardwareExtendedContext15initWithOptionsEP11IGAccelTaskRK31IGHardwareExtendedContextParams",
+     "IGHardwareExtendedContext::initWithOptions"),
+    ("IGAccelTask::getBlit3DContext",
+     "__ZN11IGAccelTask16getBlit3DContextEb",
+     "getBlit3DContext"),
+    ("blit3d_init_ctx",
+     "__Z15blit3d_init_ctxP23IGHardwareBlit3DContext",
+     "blit3d_init_ctx"),
+    ("blit3d_initialize_scratch_space",
+     "__Z31blit3d_initialize_scratch_spaceP16IGAccelSysMemory",
+     "blit3d_initialize_scratch_space"),
+    ("IntelAccelerator::startGraphicsEngine",
+     "__ZN16IntelAccelerator19startGraphicsEngineEv",
+     "startGraphicsEngine"),
+    ("IGAccelTask::withOptions",
+     "__ZN11IGAccelTask11withOptionsEP16IntelAccelerator",
+     "IGAccelTask::withOptions"),
+    ("IGHardwareBlit3DContext::initialize",
+     "__ZN23IGHardwareBlit3DContext10initializeEv",
+     "IGHardwareBlit3DContext::initialize"),
+    ("IGAccelSegmentResourceList::initBlitUsage",
+     "__ZN26IGAccelSegmentResourceList13initBlitUsageEv",
+     "initBlitUsage"),
+    ("IntelAccelerator::submitBlit",
+     "__ZN16IntelAccelerator10submitBlitEP15blit3d_params_tRK8IGVectorI11rect_pair_t25IGIOMallocAllocatorPolicyEP11IGAccelTaskb",
+     "submitBlit"),
+    ("IntelAccelerator::start",
+     "__ZN16IntelAccelerator5startEP9IOService",
+     "IntelAccelerator::start"),
 ]
 
 # PlaneParams / ScalerParams were old alias names — removed; use AppleIntelPlane / AppleIntelScaler.
@@ -186,6 +242,47 @@ INIT_FUNC_TARGETS = [
     ("AppleIntelBaseController::paramsSurfCompare", "CRTCParams", 2),
     ("AppleIntelBaseController::paramsSurfCompare", "PLANEPARAMS", 3),
     ("AppleIntelBaseController::paramsSurfCompare", "PLANEPARAMS", 4),
+
+    # ========== Accelerator / 3D-path structs ==========
+    # IGHardwareExtendedContextParams (const& param_2 of initWithOptions)
+    ("IGHardwareExtendedContext::initWithOptions", "IGHardwareExtendedContextParams", 2),
+    # IGAccelTask (this of getBlit3DContext / withOptions)
+    ("IGAccelTask::getBlit3DContext", "IGAccelTask", 0),
+    ("IGAccelTask::withOptions", "IGAccelTask", 0),
+    # IGHardwareBlit3DContext (this of initialize; param_1 of blit3d_init_ctx)
+    ("IGHardwareBlit3DContext::initialize", "IGHardwareBlit3DContext", 0),
+    ("blit3d_init_ctx", "IGHardwareBlit3DContext", 0),
+    # IGAccelSysMemory (param_1 of blit3d_initialize_scratch_space)
+    ("blit3d_initialize_scratch_space", "IGAccelSysMemory", 0),
+    # blit3d_params_t (param_1 of submitBlit)
+    ("IntelAccelerator::submitBlit", "blit3d_params_t", 1),
+    # IGAccelSegmentResourceList (this of initBlitUsage)
+    ("IGAccelSegmentResourceList::initBlitUsage", "IGAccelSegmentResourceList", 0),
+    # IntelAccelerator (param_1 of IGAccelTask::withOptions; this of start/submitBlit/createUserGPUTask)
+    # Also probe getGPUInfo/getGPUInfoICL to discover topology field offsets via PCode.
+    ("IGAccelTask::withOptions", "IntelAccelerator", 1),
+    ("IntelAccelerator::start", "IntelAccelerator", 0),
+    ("IntelAccelerator::createUserGPUTask", "IntelAccelerator", 0),
+    ("IntelAccelerator::submitBlit", "IntelAccelerator", 0),
+    ("IntelAccelerator::getGPUInfo", "IntelAccelerator", 0),
+    ("IntelAccelerator::getGPUInfoICL", "IntelAccelerator", 0),
+    # IGAccelSysMemory — confirmed function names from Ghidra symbol table.
+    # ::init(IOGraphicsAccelerator2*) stores the accelerator ref and initialises fields.
+    # ::wire / ::unwire map/unmap the backing IOBufferMemoryDescriptor → heavy this-access.
+    # ::getPhysicalSegment reads base address and size fields.
+    ("IGAccelSysMemory::init", "IGAccelSysMemory", 0),
+    ("IGAccelSysMemory::wire", "IGAccelSysMemory", 0),
+    ("IGAccelSysMemory::unwire", "IGAccelSysMemory", 0),
+    ("IGAccelSysMemory::getPhysicalSegment", "IGAccelSysMemory", 0),
+    # IGAccelSegmentResourceList — confirmed function names from Ghidra symbol table.
+    # initWithSharedResourceList is the real init (two overloads); free/prepare/complete
+    # are the operational methods most likely to touch all this-pointer fields.
+    ("IGAccelSegmentResourceList::initWithSharedResourceList", "IGAccelSegmentResourceList", 0),
+    ("IGAccelSegmentResourceList::free", "IGAccelSegmentResourceList", 0),
+    ("IGAccelSegmentResourceList::prepare", "IGAccelSegmentResourceList", 0),
+    ("IGAccelSegmentResourceList::complete", "IGAccelSegmentResourceList", 0),
+    ("IGAccelSegmentResourceList::markBlitUsage", "IGAccelSegmentResourceList", 0),
+    ("IGAccelSegmentResourceList::removeFromChannel", "IGAccelSegmentResourceList", 0),
 ]
 
 # Nested-pointer discovery targets.
@@ -311,6 +408,37 @@ KNOWN_FIELD_NAMES = {
     },
     "AppleIntelMMIO": {
         0x00: ("fMMIOBase", "volatile uint8_t*"),
+    },
+    # IntelAccelerator: offsets from Ghidra decompile of populateResetRegisterList,
+    # and from kern_gen11.cpp getGPUInfo / getGPUInfoICL hooks (confirmed by disasm).
+    # Two layouts exist for TGL vs ICL binary:
+    #   TGL (getGPUInfo):    0x115c/0x0dd8=NumSlices, 0x1158/0x0ddc=NumSubSlices
+    #   ICL (getGPUInfoICL): 0x1190/0x12cc=NumSlices, 0x1188/0x12d0=NumSubSlices
+    "IntelAccelerator": {
+        # populateResetRegisterList Ghidra decompile
+        0x1240: ("fMMIOBase",         "volatile uint8_t*"),  # MMIO BAR0 mapping base
+        0x12C0: ("fResetRegCount",    "uint64_t"),           # IGVector.count
+        0x12C8: ("fResetRegCapacity", "uint64_t"),           # IGVector.capacity
+        0x12D0: ("fResetRegData",     "void*"),              # IGVector.data (0x24-byte entries)
+        # TGL binary topology (getGPUInfo hook, confirmed by disasm)
+        0x0DD8: ("fNumSlicesMirror",     None),              # NumSlices mirror
+        0x0DDC: ("fNumSubSlicesMirror",  None),              # NumSubSlices mirror
+        0x1124: ("fExecutionUnitCount",  None),              # MaxEUPerSubSlice × NumSubSlices
+        0x1150: ("fFrequencyPair",       "uint64_t"),        # lo=fMaxMHz, hi=fMinMHz
+        0x1158: ("fNumSubSlices",        None),
+        0x115C: ("fNumSlices",           None),
+        0x1164: ("fL3BankCount",         None),
+        0x116C: ("fMaxEUPerSubSlice",    None),
+        # V44 diagnostic
+        0x128C: ("fbRegistered",         "uint8_t"),         # set by registerWithFramebufferController
+    },
+    # IGAccelTask: offset 0x298 confirmed from ensureTaskContext lambda in NootedGreen.
+    "IGAccelTask": {
+        0x298: ("fContext", "void*"),  # IGHardwareExtendedContext* for this task
+    },
+    # IGHardwareBlit3DContext: offset 0 is vtable; other fields TBD from blit3d_init_ctx probe.
+    "IGHardwareBlit3DContext": {
+        0x00: ("vtable", "void*"),
     },
 }
 
@@ -1264,6 +1392,72 @@ def collect_all_types(program):
     return structs, unions, enums
 
 # ----------------------------------------------------------------------------
+# Function signature validation
+# ----------------------------------------------------------------------------
+
+def discover_function_signatures(program):
+    """Look up each SIG_TARGETS entry in the symbol table and compare the
+    actual mangled name with the expected one we use in NootedGreen hooks.
+
+    Returns a list of (hook_label, status, actual_mangled, expected_mangled).
+    status is one of: "OK", "MISMATCH", "NOT_FOUND", "NO_SYMBOL".
+    """
+    sym_table = program.getSymbolTable()
+    results = []
+
+    for fragment, expected, hook_label in SIG_TARGETS:
+        matches = _find_functions_by_fragment(program, fragment)
+        if not matches:
+            results.append((hook_label, "NOT_FOUND", None, expected))
+            continue
+
+        # Search all symbols at the entry point for a mangled (__Z) name.
+        actual_mangled = None
+        for fn in matches:
+            entry = fn.getEntryPoint()
+            for sym in sym_table.getSymbols(entry):
+                sname = sym.getName()
+                if sname.startswith("__Z"):
+                    actual_mangled = sname
+                    break
+            if actual_mangled:
+                break
+
+        # Fallback: the function name itself may already be mangled.
+        if actual_mangled is None:
+            fn_name = matches[0].getName()
+            if fn_name.startswith("__Z"):
+                actual_mangled = fn_name
+
+        if actual_mangled is None:
+            results.append((hook_label, "NO_SYMBOL",
+                            matches[0].getName(True), expected))
+        elif actual_mangled == expected:
+            results.append((hook_label, "OK", actual_mangled, expected))
+        else:
+            results.append((hook_label, "MISMATCH", actual_mangled, expected))
+
+    return results
+
+
+def print_sig_report(results):
+    """Print a human-readable signature validation table."""
+    ok = sum(1 for _, s, _, _ in results if s == "OK")
+    print("Signature validation: {}/{} OK".format(ok, len(results)))
+    for hook_label, status, actual, expected in results:
+        if status == "OK":
+            print("  [OK]       {}".format(hook_label))
+        elif status == "NOT_FOUND":
+            print("  [NOT FOUND] {} — symbol not in binary".format(hook_label))
+        elif status == "NO_SYMBOL":
+            print("  [NO MANGLED] {} — demangled: {}".format(hook_label, actual))
+        else:
+            print("  [MISMATCH] {}".format(hook_label))
+            print("    expected: {}".format(expected))
+            print("    actual  : {}".format(actual))
+
+
+# ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
 
@@ -1274,6 +1468,17 @@ def main():
         return
 
     print("Scanning {}...".format(program.getName()))
+
+    # -----------------------------------------------------------------------
+    # Phase -1 — Signature validation
+    # Verify that each mangled symbol used in NootedGreen hooks matches what
+    # is actually in the binary.  Run this first so any mismatch is visible
+    # before the slow PCode analysis begins.
+    # -----------------------------------------------------------------------
+    print("Signature validation ({} targets)...".format(len(SIG_TARGETS)))
+    sig_results = discover_function_signatures(program)
+    print_sig_report(sig_results)
+
 
     # -----------------------------------------------------------------------
     # Phase 0 — PCode struct discovery

@@ -6,10 +6,10 @@
 //  analyzed AppleIntelTGLGraphicsFramebuffer.kext. Do not edit by hand — re-run
 //  the script after updating struct definitions in Ghidra.
 //
-//  Source program: structsGFX.h
-//  Generated: 2026-05-11T15:44:41.758000
+//  Source program: AppleIntelTGLGraphics
+//  Generated: 2026-05-17T06:44:34.003000
 //
-//  Populated structs: 6  |  Stubs: 2  |  Enums: 2
+//  Populated structs: 16  |  Stubs: 7  |  Enums: 0
 
 #ifndef AppleIntelParams_hpp
 #define AppleIntelParams_hpp
@@ -18,132 +18,340 @@
 
 namespace AppleIntel {
 
-// ---- Structs (fields identified) ----
+struct AppleIntelBaseController;
+struct AppleIntelDisplayPath;
+struct AppleIntelMMIO;
+struct AppleIntelPlaneRegCache;
+struct AppleIntelPowerWell;
+struct AppleIntelScalerRegCache;
 
-// struct CRTCParams -- 0xF0 bytes, 33 components
-struct CRTCParams {
-    uint32_t       TRANS_CLK_SEL; // +0x0
-    uint32_t       TRANS_DDI_FUNC_CTL; // +0x4
-    uint32_t       TRANS_DDI_FUNC_CTL2; // +0x8
-    uint32_t       TRANS_MSA_MISC; // +0xC
-    uint32_t       TRANS_HTOTAL; // +0x10
-    uint32_t       TRANS_HBLANK; // +0x14
-    uint32_t       TRANS_HSYNC; // +0x18
-    uint32_t       TRANS_VTOTAL; // +0x1C
-    uint32_t       TRANS_VBLANK; // +0x20
-    uint32_t       TRANS_VSYNC; // +0x24
-    uint32_t       PIPE_SRCSZ; // +0x28
-    uint32_t       TRANS_CONF; // +0x2C
-    uint8_t        _pad_0030[24]; // +0x30
-    uint32_t       PS_PS_WIN_POS; // +0x48
-    uint32_t       PS_PS_WIN_SZ; // +0x4C
-    uint32_t       PIPE_SEAM_EXCESS; // +0x50
-    uint32_t       PS_HPHASE; // +0x54
-    uint8_t        _pad_0058[48]; // +0x58
-    uint32_t       PPS_0; // +0x88
-    uint32_t       PPS_1; // +0x8C
-    uint32_t       PPS_2; // +0x90
-    uint32_t       PPS_3; // +0x94
-    uint32_t       PPS_4; // +0x98
-    uint32_t       PPS_5; // +0x9C
-    uint32_t       PPS_6; // +0xA0
-    uint32_t       PPS_7; // +0xA4
-    uint32_t       PPS_8; // +0xA8
-    uint32_t       PPS_9; // +0xAC
-    uint32_t       PPS_10; // +0xB0
-    uint32_t       PPS_16; // +0xB4
-    uint8_t        _pad_00B8[48]; // +0xB8
-    uint32_t       DSC_ENGINE_SEL; // +0xE8
-    uint32_t       DSC_JOINER_CTL; // +0xEC
+// ---- Structs (PCode-discovered, fully named) ----
+// These layouts are fully named from KNOWN_FIELD_NAMES and can be promoted as-is.
+
+// struct AppleIntelBaseController -- PCode-discovered from AppleIntelBaseController::init, 4 access sites, ~0xC60 bytes
+struct AppleIntelBaseController {
+    uint8_t        _pad_0000[0x78]; // +0x0
+    AppleIntelMMIO* fMMIO; // +0x78
+    uint8_t        _pad_0080[0xBC0]; // +0x80
+    uint32_t       unk_0C40; // +0xC40
+    uint8_t        _pad_0C44[0x14]; // +0xC44
+    uint32_t       flags_ig; // +0xC58
+    uint32_t       fInfoFlags2; // +0xC5C
 };
-static_assert(sizeof(CRTCParams) == 0xF0, "CRTCParams size");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_CLK_SEL) == 0x0, "CRTCParams.TRANS_CLK_SEL");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_DDI_FUNC_CTL) == 0x4, "CRTCParams.TRANS_DDI_FUNC_CTL");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_DDI_FUNC_CTL2) == 0x8, "CRTCParams.TRANS_DDI_FUNC_CTL2");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_MSA_MISC) == 0xC, "CRTCParams.TRANS_MSA_MISC");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_HTOTAL) == 0x10, "CRTCParams.TRANS_HTOTAL");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_HBLANK) == 0x14, "CRTCParams.TRANS_HBLANK");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_HSYNC) == 0x18, "CRTCParams.TRANS_HSYNC");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_VTOTAL) == 0x1C, "CRTCParams.TRANS_VTOTAL");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_VBLANK) == 0x20, "CRTCParams.TRANS_VBLANK");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_VSYNC) == 0x24, "CRTCParams.TRANS_VSYNC");
-static_assert(__builtin_offsetof(CRTCParams, PIPE_SRCSZ) == 0x28, "CRTCParams.PIPE_SRCSZ");
-static_assert(__builtin_offsetof(CRTCParams, TRANS_CONF) == 0x2C, "CRTCParams.TRANS_CONF");
-static_assert(__builtin_offsetof(CRTCParams, PS_PS_WIN_POS) == 0x48, "CRTCParams.PS_PS_WIN_POS");
-static_assert(__builtin_offsetof(CRTCParams, PS_PS_WIN_SZ) == 0x4C, "CRTCParams.PS_PS_WIN_SZ");
-static_assert(__builtin_offsetof(CRTCParams, PIPE_SEAM_EXCESS) == 0x50, "CRTCParams.PIPE_SEAM_EXCESS");
-static_assert(__builtin_offsetof(CRTCParams, PS_HPHASE) == 0x54, "CRTCParams.PS_HPHASE");
-static_assert(__builtin_offsetof(CRTCParams, PPS_0) == 0x88, "CRTCParams.PPS_0");
-static_assert(__builtin_offsetof(CRTCParams, PPS_1) == 0x8C, "CRTCParams.PPS_1");
-static_assert(__builtin_offsetof(CRTCParams, PPS_2) == 0x90, "CRTCParams.PPS_2");
-static_assert(__builtin_offsetof(CRTCParams, PPS_3) == 0x94, "CRTCParams.PPS_3");
-static_assert(__builtin_offsetof(CRTCParams, PPS_4) == 0x98, "CRTCParams.PPS_4");
-static_assert(__builtin_offsetof(CRTCParams, PPS_5) == 0x9C, "CRTCParams.PPS_5");
-static_assert(__builtin_offsetof(CRTCParams, PPS_6) == 0xA0, "CRTCParams.PPS_6");
-static_assert(__builtin_offsetof(CRTCParams, PPS_7) == 0xA4, "CRTCParams.PPS_7");
-static_assert(__builtin_offsetof(CRTCParams, PPS_8) == 0xA8, "CRTCParams.PPS_8");
-static_assert(__builtin_offsetof(CRTCParams, PPS_9) == 0xAC, "CRTCParams.PPS_9");
-static_assert(__builtin_offsetof(CRTCParams, PPS_10) == 0xB0, "CRTCParams.PPS_10");
-static_assert(__builtin_offsetof(CRTCParams, PPS_16) == 0xB4, "CRTCParams.PPS_16");
-static_assert(__builtin_offsetof(CRTCParams, DSC_ENGINE_SEL) == 0xE8, "CRTCParams.DSC_ENGINE_SEL");
-static_assert(__builtin_offsetof(CRTCParams, DSC_JOINER_CTL) == 0xEC, "CRTCParams.DSC_JOINER_CTL");
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(AppleIntelBaseController, fMMIO) == 0x78, "AppleIntelBaseController.fMMIO");
+static_assert(__builtin_offsetof(AppleIntelBaseController, flags_ig) == 0xC58, "AppleIntelBaseController.flags_ig");
+static_assert(__builtin_offsetof(AppleIntelBaseController, fInfoFlags2) == 0xC5C, "AppleIntelBaseController.fInfoFlags2");
 
-// struct LinkConfig -- 0x80 bytes, 1 components
-struct LinkConfig {
-    uint8_t        _opaque[128]; // +0x0
+// struct AppleIntelFramebuffer -- PCode-discovered from AppleIntelFramebuffer::init, 5 access sites, ~0x1D0 bytes
+struct AppleIntelFramebuffer {
+    uint8_t        _pad_0000[0x1A8]; // +0x0
+    AppleIntelBaseController* fController; // +0x1A8
+    uint32_t       fPipeIndex; // +0x1B0
+    uint8_t        _pad_01B4[0x4]; // +0x1B4
+    AppleIntelDisplayPath* fPath; // +0x1B8
+    uint32_t       fPanelPower; // +0x1C0
+    uint8_t        _pad_01C4[0x4]; // +0x1C4
+    uint32_t       fBacklightLevel; // +0x1C8
+    uint8_t        _pad_01CC[0x4]; // trailing
 };
-static_assert(sizeof(LinkConfig) == 0x80, "LinkConfig size");
-static_assert(__builtin_offsetof(LinkConfig, _opaque) == 0x0, "LinkConfig._opaque");
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(AppleIntelFramebuffer, fController) == 0x1A8, "AppleIntelFramebuffer.fController");
+static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPipeIndex) == 0x1B0, "AppleIntelFramebuffer.fPipeIndex");
+static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPath) == 0x1B8, "AppleIntelFramebuffer.fPath");
+static_assert(__builtin_offsetof(AppleIntelFramebuffer, fPanelPower) == 0x1C0, "AppleIntelFramebuffer.fPanelPower");
+static_assert(__builtin_offsetof(AppleIntelFramebuffer, fBacklightLevel) == 0x1C8, "AppleIntelFramebuffer.fBacklightLevel");
 
-// struct PLANEPARAMS -- 0x2C bytes, 6 components
-struct PLANEPARAMS {
-    uint32_t       PLANE_CTL; // +0x0
-    uint8_t        _pad_0004[20]; // +0x4
-    uint32_t       PLANE_STRIDE; // +0x18
-    uint8_t        _pad_001C[4]; // +0x1C
-    uint32_t       PLANE_SURF; // +0x20
-    uint8_t        _pad_0024[8]; // +0x24
+// struct AppleIntelMMIO -- PCode-discovered from AppleIntelMMIO::init, 1 access sites, ~0x8 bytes
+struct AppleIntelMMIO {
+    volatile uint8_t* fMMIOBase; // +0x0
 };
-static_assert(sizeof(PLANEPARAMS) == 0x2C, "PLANEPARAMS size");
-static_assert(__builtin_offsetof(PLANEPARAMS, PLANE_CTL) == 0x0, "PLANEPARAMS.PLANE_CTL");
-static_assert(__builtin_offsetof(PLANEPARAMS, PLANE_STRIDE) == 0x18, "PLANEPARAMS.PLANE_STRIDE");
-static_assert(__builtin_offsetof(PLANEPARAMS, PLANE_SURF) == 0x20, "PLANEPARAMS.PLANE_SURF");
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(AppleIntelMMIO, fMMIOBase) == 0x0, "AppleIntelMMIO.fMMIOBase");
 
-// struct SCALERPARAMS -- 0xC bytes, 3 components
-struct SCALERPARAMS {
+// struct AppleIntelPlane -- PCode-discovered from AppleIntelPlane::init, 6 access sites, ~0x98 bytes
+struct AppleIntelPlane {
+    uint32_t       fPipeIndex; // +0x0
+    uint8_t        _pad_0004[0x4]; // +0x4
+    AppleIntelBaseController* fController; // +0x8
+    AppleIntelDisplayPath* fPath; // +0x10
+    uint32_t       fPlaneIndex; // +0x18
+    uint8_t        _pad_001C[0x68]; // +0x1C
+    uint32_t       fEnabled; // +0x84
+    uint8_t        _pad_0088[0x8]; // +0x88
+    AppleIntelPlaneRegCache* fRegCache; // +0x90
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(AppleIntelPlane, fPipeIndex) == 0x0, "AppleIntelPlane.fPipeIndex");
+static_assert(__builtin_offsetof(AppleIntelPlane, fController) == 0x8, "AppleIntelPlane.fController");
+static_assert(__builtin_offsetof(AppleIntelPlane, fPath) == 0x10, "AppleIntelPlane.fPath");
+static_assert(__builtin_offsetof(AppleIntelPlane, fPlaneIndex) == 0x18, "AppleIntelPlane.fPlaneIndex");
+static_assert(__builtin_offsetof(AppleIntelPlane, fEnabled) == 0x84, "AppleIntelPlane.fEnabled");
+static_assert(__builtin_offsetof(AppleIntelPlane, fRegCache) == 0x90, "AppleIntelPlane.fRegCache");
+
+// struct AppleIntelPlaneRegCache -- PCode-discovered from AppleIntelPlaneRegCache::init, 3 access sites, ~0x158 bytes
+struct AppleIntelPlaneRegCache {
+    uint8_t        _pad_0000[0x100]; // +0x0
+    uint32_t       PLANE_CTL; // +0x100
+    uint32_t       PLANE_STRIDE; // +0x104
+    uint8_t        _pad_0108[0x4C]; // +0x108
+    uint32_t       PLANE_COLOR_CTL; // +0x154
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_CTL) == 0x100, "AppleIntelPlaneRegCache.PLANE_CTL");
+static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_STRIDE) == 0x104, "AppleIntelPlaneRegCache.PLANE_STRIDE");
+static_assert(__builtin_offsetof(AppleIntelPlaneRegCache, PLANE_COLOR_CTL) == 0x154, "AppleIntelPlaneRegCache.PLANE_COLOR_CTL");
+
+// struct AppleIntelScaler -- PCode-discovered from AppleIntelScaler::init, 6 access sites, ~0x30 bytes
+struct AppleIntelScaler {
+    uint32_t       fPipeIndex; // +0x0
+    uint8_t        _pad_0004[0x4]; // +0x4
+    AppleIntelBaseController* fController; // +0x8
+    AppleIntelDisplayPath* fPath; // +0x10
+    uint32_t       fScalerIndex; // +0x18
+    uint8_t        _pad_001C[0x4]; // +0x1C
+    uint32_t       fEnabled; // +0x20
+    uint8_t        _pad_0024[0x4]; // +0x24
+    AppleIntelScalerRegCache* fRegCache; // +0x28
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(AppleIntelScaler, fPipeIndex) == 0x0, "AppleIntelScaler.fPipeIndex");
+static_assert(__builtin_offsetof(AppleIntelScaler, fController) == 0x8, "AppleIntelScaler.fController");
+static_assert(__builtin_offsetof(AppleIntelScaler, fPath) == 0x10, "AppleIntelScaler.fPath");
+static_assert(__builtin_offsetof(AppleIntelScaler, fScalerIndex) == 0x18, "AppleIntelScaler.fScalerIndex");
+static_assert(__builtin_offsetof(AppleIntelScaler, fEnabled) == 0x20, "AppleIntelScaler.fEnabled");
+static_assert(__builtin_offsetof(AppleIntelScaler, fRegCache) == 0x28, "AppleIntelScaler.fRegCache");
+
+// struct AppleIntelScalerRegCache -- PCode-discovered from AppleIntelScalerRegCache::init, 3 access sites, ~0x10 bytes
+struct AppleIntelScalerRegCache {
     uint32_t       PS_CTRL; // +0x0
     uint32_t       PS_WIN_POS; // +0x4
     uint32_t       PS_WIN_SZ; // +0x8
+    uint8_t        _pad_000C[0x4]; // trailing
 };
-static_assert(sizeof(SCALERPARAMS) == 0xC, "SCALERPARAMS size");
-static_assert(__builtin_offsetof(SCALERPARAMS, PS_CTRL) == 0x0, "SCALERPARAMS.PS_CTRL");
-static_assert(__builtin_offsetof(SCALERPARAMS, PS_WIN_POS) == 0x4, "SCALERPARAMS.PS_WIN_POS");
-static_assert(__builtin_offsetof(SCALERPARAMS, PS_WIN_SZ) == 0x8, "SCALERPARAMS.PS_WIN_SZ");
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(AppleIntelScalerRegCache, PS_CTRL) == 0x0, "AppleIntelScalerRegCache.PS_CTRL");
+static_assert(__builtin_offsetof(AppleIntelScalerRegCache, PS_WIN_POS) == 0x4, "AppleIntelScalerRegCache.PS_WIN_POS");
+static_assert(__builtin_offsetof(AppleIntelScalerRegCache, PS_WIN_SZ) == 0x8, "AppleIntelScalerRegCache.PS_WIN_SZ");
 
-// struct ppsConfig_t -- 0x18C bytes, 1 components
-struct ppsConfig_t {
-    uint8_t        _opaque[396]; // +0x0
+// struct FlipTransactionArgs -- PCode-discovered from FlipTransactionArgs::init, 2 access sites, ~0x40 bytes
+struct FlipTransactionArgs {
+    uint8_t        _pad_0000[0x1C]; // +0x0
+    uint32_t       BPCSelector; // +0x1C
+    uint8_t        _pad_0020[0x1C]; // +0x20
+    uint32_t       TilingEnum; // +0x3C
 };
-static_assert(sizeof(ppsConfig_t) == 0x18C, "ppsConfig_t size");
-static_assert(__builtin_offsetof(ppsConfig_t, _opaque) == 0x0, "ppsConfig_t._opaque");
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(FlipTransactionArgs, BPCSelector) == 0x1C, "FlipTransactionArgs.BPCSelector");
+static_assert(__builtin_offsetof(FlipTransactionArgs, TilingEnum) == 0x3C, "FlipTransactionArgs.TilingEnum");
 
-// struct ppsOpt_t -- 0x50 bytes, 1 components
-struct ppsOpt_t {
-    uint8_t        _opaque[80]; // +0x0
+// struct IGAccelSegmentResourceList -- PCode-discovered from IGAccelSegmentResourceList::init, 2 access sites, ~0x80 bytes
+struct IGAccelSegmentResourceList {
+    uint8_t        _pad_0000[0x78]; // +0x0
+    uint32_t       unk_0078; // +0x78
+    uint8_t        _pad_007C[0x4]; // trailing
 };
-static_assert(sizeof(ppsOpt_t) == 0x50, "ppsOpt_t size");
-static_assert(__builtin_offsetof(ppsOpt_t, _opaque) == 0x0, "ppsOpt_t._opaque");
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+
+// struct IGAccelTask -- PCode-discovered from IGAccelTask::init, 1 access sites, ~0x2A0 bytes
+struct IGAccelTask {
+    uint8_t        _pad_0000[0x298]; // +0x0
+    void*          fContext; // +0x298
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(IGAccelTask, fContext) == 0x298, "IGAccelTask.fContext");
+
+// struct IGHardwareBlit3DContext -- PCode-discovered from IGHardwareBlit3DContext::init, 2 access sites, ~0x118 bytes
+struct IGHardwareBlit3DContext {
+    void*          vtable; // +0x0
+    uint8_t        _pad_0008[0x10A]; // +0x8
+    uint32_t       unk_0112; // +0x112
+    uint8_t        _pad_0116[0x2]; // trailing
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(IGHardwareBlit3DContext, vtable) == 0x0, "IGHardwareBlit3DContext.vtable");
+
+// struct IGHardwareExtendedContextParams -- PCode-discovered from IGHardwareExtendedContextParams::init, 1 access sites, ~0x10 bytes
+struct IGHardwareExtendedContextParams {
+    uint8_t        _pad_0000[0xC]; // +0x0
+    uint32_t       unk_000C; // +0xC
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+
+// struct IntelAccelerator -- PCode-discovered from IntelAccelerator::init, 26 access sites, ~0x1C58 bytes
+struct IntelAccelerator {
+    uint8_t        _pad_0000[0xC78]; // +0x0
+    uint32_t       unk_0C78; // +0xC78
+    uint8_t        _pad_0C7C[0x15C]; // +0xC7C
+    uint32_t       fNumSlicesMirror; // +0xDD8
+    uint32_t       fNumSubSlicesMirror; // +0xDDC
+    uint8_t        _pad_0DE0[0x13E]; // +0xDE0
+    uint32_t       unk_0F1E; // +0xF1E
+    uint8_t        _pad_0F22[0x2]; // +0xF22
+    uint32_t       unk_0F24; // +0xF24
+    uint8_t        _pad_0F28[0x4]; // +0xF28
+    uint32_t       unk_0F2C; // +0xF2C
+    uint8_t        _pad_0F30[0x1F4]; // +0xF30
+    uint32_t       fExecutionUnitCount; // +0x1124
+    uint8_t        _pad_1128[0x28]; // +0x1128
+    uint64_t       fFrequencyPair; // +0x1150
+    uint8_t        _pad_1154[0x4]; // +0x1154
+    uint32_t       fNumSubSlices; // +0x1158
+    uint32_t       fNumSlices; // +0x115C
+    uint8_t        _pad_1160[0x4]; // +0x1160
+    uint32_t       fL3BankCount; // +0x1164
+    uint8_t        _pad_1168[0x4]; // +0x1168
+    uint32_t       fMaxEUPerSubSlice; // +0x116C
+    uint8_t        _pad_1170[0x20]; // +0x1170
+    uint32_t       unk_1190; // +0x1190
+    uint32_t       unk_1194; // +0x1194
+    uint8_t        _pad_1198[0x90]; // +0x1198
+    uint64_t       unk_1228; // +0x1228
+    uint8_t        _pad_1230[0x10]; // +0x1230
+    volatile uint8_t* fMMIOBase; // +0x1240
+    uint8_t        _pad_1248[0x44]; // +0x1248
+    uint8_t        fbRegistered; // +0x128C
+    uint8_t        _pad_1290[0xC]; // +0x1290
+    uint32_t       unk_129C; // +0x129C
+    uint8_t        _pad_12A0[0x20]; // +0x12A0
+    uint64_t       fResetRegCount; // +0x12C0
+    uint8_t        _pad_12C4[0x4]; // +0x12C4
+    uint64_t       fResetRegCapacity; // +0x12C8
+    uint8_t        _pad_12CC[0x4]; // +0x12CC
+    void*          fResetRegData; // +0x12D0
+    uint8_t        _pad_12D8[0x28]; // +0x12D8
+    uint32_t       unk_1300; // +0x1300
+    uint8_t        _pad_1304[0x170]; // +0x1304
+    uint32_t       unk_1474; // +0x1474
+    uint8_t        _pad_1478[0x7DC]; // +0x1478
+    uint32_t       unk_1C54; // +0x1C54
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+static_assert(__builtin_offsetof(IntelAccelerator, fNumSlicesMirror) == 0xDD8, "IntelAccelerator.fNumSlicesMirror");
+static_assert(__builtin_offsetof(IntelAccelerator, fNumSubSlicesMirror) == 0xDDC, "IntelAccelerator.fNumSubSlicesMirror");
+static_assert(__builtin_offsetof(IntelAccelerator, fExecutionUnitCount) == 0x1124, "IntelAccelerator.fExecutionUnitCount");
+static_assert(__builtin_offsetof(IntelAccelerator, fFrequencyPair) == 0x1150, "IntelAccelerator.fFrequencyPair");
+static_assert(__builtin_offsetof(IntelAccelerator, fNumSubSlices) == 0x1158, "IntelAccelerator.fNumSubSlices");
+static_assert(__builtin_offsetof(IntelAccelerator, fNumSlices) == 0x115C, "IntelAccelerator.fNumSlices");
+static_assert(__builtin_offsetof(IntelAccelerator, fL3BankCount) == 0x1164, "IntelAccelerator.fL3BankCount");
+static_assert(__builtin_offsetof(IntelAccelerator, fMaxEUPerSubSlice) == 0x116C, "IntelAccelerator.fMaxEUPerSubSlice");
+static_assert(__builtin_offsetof(IntelAccelerator, fMMIOBase) == 0x1240, "IntelAccelerator.fMMIOBase");
+static_assert(__builtin_offsetof(IntelAccelerator, fbRegistered) == 0x128C, "IntelAccelerator.fbRegistered");
+static_assert(__builtin_offsetof(IntelAccelerator, fResetRegCount) == 0x12C0, "IntelAccelerator.fResetRegCount");
+static_assert(__builtin_offsetof(IntelAccelerator, fResetRegCapacity) == 0x12C8, "IntelAccelerator.fResetRegCapacity");
+static_assert(__builtin_offsetof(IntelAccelerator, fResetRegData) == 0x12D0, "IntelAccelerator.fResetRegData");
+
+// struct blit3d_params_t -- PCode-discovered from blit3d_params_t::init, 4 access sites, ~0xC0 bytes
+struct blit3d_params_t {
+    uint8_t        _pad_0000[0x3C]; // +0x0
+    uint32_t       unk_003C; // +0x3C
+    uint8_t        _pad_0040[0x44]; // +0x40
+    uint32_t       unk_0084; // +0x84
+    uint8_t        _pad_0088[0x18]; // +0x88
+    uint32_t       unk_00A0; // +0xA0
+    uint8_t        _pad_00A4[0x14]; // +0xA4
+    uint32_t       unk_00B8; // +0xB8
+    uint8_t        _pad_00BC[0x4]; // trailing
+};
+// NOTE: total size is a lower bound; extend once the real sizeof() is known from IDA/Ghidra.
+
+// ---- Structs (PCode-discovered from function analysis) ----
+// Fields were reconstructed by tracing direct parameter accesses and nested pointer dereferences.
+// Names from KNOWN_FIELD_NAMES are accurate; field_NNNN names are placeholders.
+
+// AppleIntelDisplayPath -- PCode analysis yielded no this-pointer accesses
+struct AppleIntelDisplayPath { uint8_t _opaque[1]; };
+
+
+// AppleIntelPowerWell -- PCode analysis yielded no this-pointer accesses
+struct AppleIntelPowerWell { uint8_t _opaque[1]; };
+
 
 // ---- Stubs (whitelist structs not yet defined in Ghidra) ----
 
-// PlaneParams -- STUB: not yet defined in Ghidra
-struct PlaneParams {
+// CRTCParams -- STUB: not yet defined in Ghidra (expected offsets only)
+struct CRTCParams {
+    uint32_t TRANS_CLK_SEL; // +0x0 (expected)
+    uint32_t TRANS_DDI_FUNC_CTL; // +0x4 (expected)
+    uint32_t TRANS_DDI_FUNC_CTL2; // +0x8 (expected)
+    uint32_t TRANS_MSA_MISC; // +0xC (expected)
+    uint32_t TRANS_HTOTAL; // +0x10 (expected)
+    uint32_t TRANS_HBLANK; // +0x14 (expected)
+    uint32_t TRANS_HSYNC; // +0x18 (expected)
+    uint32_t TRANS_VTOTAL; // +0x1C (expected)
+    uint32_t TRANS_VBLANK; // +0x20 (expected)
+    uint32_t TRANS_VSYNC; // +0x24 (expected)
+    uint32_t PIPE_SRCSZ; // +0x28 (expected)
+    uint32_t TRANS_CONF; // +0x2C (expected)
+    uint8_t _pad_0030[0x58];
+    uint32_t PPS_0; // +0x88 (expected)
+    uint8_t _pad_008C[0x28];
+    uint32_t PPS_16; // +0xB4 (expected)
+    uint8_t _pad_00B8[0x30];
+    uint32_t DSC_ENGINE_SEL; // +0xE8 (expected)
+    uint32_t DSC_JOINER_CTL; // +0xEC (expected)
+};
+static_assert(__builtin_offsetof(CRTCParams, TRANS_CLK_SEL) == 0x0, "CRTCParams.TRANS_CLK_SEL expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_DDI_FUNC_CTL) == 0x4, "CRTCParams.TRANS_DDI_FUNC_CTL expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_DDI_FUNC_CTL2) == 0x8, "CRTCParams.TRANS_DDI_FUNC_CTL2 expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_MSA_MISC) == 0xC, "CRTCParams.TRANS_MSA_MISC expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_HTOTAL) == 0x10, "CRTCParams.TRANS_HTOTAL expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_HBLANK) == 0x14, "CRTCParams.TRANS_HBLANK expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_HSYNC) == 0x18, "CRTCParams.TRANS_HSYNC expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_VTOTAL) == 0x1C, "CRTCParams.TRANS_VTOTAL expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_VBLANK) == 0x20, "CRTCParams.TRANS_VBLANK expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_VSYNC) == 0x24, "CRTCParams.TRANS_VSYNC expected");
+static_assert(__builtin_offsetof(CRTCParams, PIPE_SRCSZ) == 0x28, "CRTCParams.PIPE_SRCSZ expected");
+static_assert(__builtin_offsetof(CRTCParams, TRANS_CONF) == 0x2C, "CRTCParams.TRANS_CONF expected");
+static_assert(__builtin_offsetof(CRTCParams, PPS_0) == 0x88, "CRTCParams.PPS_0 expected");
+static_assert(__builtin_offsetof(CRTCParams, PPS_16) == 0xB4, "CRTCParams.PPS_16 expected");
+static_assert(__builtin_offsetof(CRTCParams, DSC_ENGINE_SEL) == 0xE8, "CRTCParams.DSC_ENGINE_SEL expected");
+static_assert(__builtin_offsetof(CRTCParams, DSC_JOINER_CTL) == 0xEC, "CRTCParams.DSC_JOINER_CTL expected");
+
+// PLANEPARAMS -- STUB: not yet defined in Ghidra (expected offsets only)
+struct PLANEPARAMS {
+    uint32_t PLANE_CTL; // +0x0 (expected)
+    uint8_t _pad_0004[0x14];
+    uint32_t PLANE_STRIDE; // +0x18 (expected)
+    uint8_t _pad_001C[0x4];
+    uint32_t PLANE_SURF; // +0x20 (expected)
+    uint8_t _pad_0024[0xC]; // trailing
+};
+static_assert(__builtin_offsetof(PLANEPARAMS, PLANE_CTL) == 0x0, "PLANEPARAMS.PLANE_CTL expected");
+static_assert(__builtin_offsetof(PLANEPARAMS, PLANE_STRIDE) == 0x18, "PLANEPARAMS.PLANE_STRIDE expected");
+static_assert(__builtin_offsetof(PLANEPARAMS, PLANE_SURF) == 0x20, "PLANEPARAMS.PLANE_SURF expected");
+
+// SCALERPARAMS -- STUB: not yet defined in Ghidra (expected offsets only)
+struct SCALERPARAMS {
+    uint32_t PS_CTRL; // +0x0 (expected)
+    uint32_t PS_WIN_POS; // +0x4 (expected)
+    uint32_t PS_WIN_SZ; // +0x8 (expected)
+    uint8_t _pad_000C[0x4]; // trailing
+};
+static_assert(__builtin_offsetof(SCALERPARAMS, PS_CTRL) == 0x0, "SCALERPARAMS.PS_CTRL expected");
+static_assert(__builtin_offsetof(SCALERPARAMS, PS_WIN_POS) == 0x4, "SCALERPARAMS.PS_WIN_POS expected");
+static_assert(__builtin_offsetof(SCALERPARAMS, PS_WIN_SZ) == 0x8, "SCALERPARAMS.PS_WIN_SZ expected");
+
+// ppsConfig_t -- STUB: not yet defined in Ghidra
+struct ppsConfig_t {
     // TODO: define fields in Ghidra's Data Type Manager
     uint8_t _opaque[1];
 };
 
-// ScalerParams -- STUB: not yet defined in Ghidra
-struct ScalerParams {
+// ppsOpt_t -- STUB: not yet defined in Ghidra
+struct ppsOpt_t {
+    // TODO: define fields in Ghidra's Data Type Manager
+    uint8_t _opaque[1];
+};
+
+// LinkConfig -- STUB: not yet defined in Ghidra
+struct LinkConfig {
+    // TODO: define fields in Ghidra's Data Type Manager
+    uint8_t _opaque[1];
+};
+
+// IGAccelSysMemory -- STUB: not yet defined in Ghidra
+struct IGAccelSysMemory {
     // TODO: define fields in Ghidra's Data Type Manager
     uint8_t _opaque[1];
 };

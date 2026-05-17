@@ -451,6 +451,138 @@ static_assert(__builtin_offsetof(FlipTransactionArgs, TilingEnum) == 0x3C, "Flip
 static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0040)  == 0x40, "FlipTransactionArgs.unk_0040");
 static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0050)  == 0x50, "FlipTransactionArgs.unk_0050");
 
+// ---------------------------------------------------------------------------
+// Accelerator / 3D-path structs
+// Discovered by tools/extract_apple_params.py PCode analysis of the
+// AppleIntelTGLGraphicsAccelerator kext.  Offsets confirmed against
+// kern_gen11.cpp hook code and Ghidra decompile of key functions.
+// ---------------------------------------------------------------------------
+
+// IntelAccelerator — partial layout, lower-bound size.
+// Key topology fields from getGPUInfo/getGPUInfoICL disasm (kern_gen11.cpp).
+// IGVector fields (0x12C0..0x12D8) from Ghidra populateResetRegisterList decompile.
+// fMMIOBase (0x1240) confirmed via *(long *)(this + 0x1240) in populateResetRegisterList.
+struct IntelAccelerator {
+    uint8_t        _pad_0000[0xC78];       // +0x0
+    uint32_t       unk_0C78;               // +0xC78
+    uint8_t        _pad_0C7C[0x15C];       // +0xC7C
+    uint32_t       fNumSlicesMirror;       // +0xDD8  (TGL getGPUInfo mirror)
+    uint32_t       fNumSubSlicesMirror;    // +0xDDC  (TGL getGPUInfo mirror)
+    uint8_t        _pad_0DE0[0x344];       // +0xDE0..+0x1123  (opaque; contains embedded sub-structs at +0xF10/+0xF2E/+0xFED confirmed via leaq/movq in initHardwareWorkarounds)
+    uint32_t       fExecutionUnitCount;    // +0x1124 (MaxEU × NumSubSlices)
+    uint8_t        _pad_1128[0x28];        // +0x1128
+    uint64_t       fFrequencyPair;         // +0x1150 (lo=fMaxMHz, hi=fMinMHz)
+    uint32_t       fNumSubSlices;          // +0x1158
+    uint32_t       fNumSlices;             // +0x115C
+    uint8_t        _pad_1160[0x4];         // +0x1160
+    uint32_t       fL3BankCount;           // +0x1164
+    uint8_t        _pad_1168[0x4];         // +0x1168
+    uint32_t       fMaxEUPerSubSlice;      // +0x116C
+    uint8_t        _pad_1170[0x18];        // +0x1170
+    uint32_t       unk_1188;               // +0x1188  (movl in getGPUInfo — g_timestampFreqPerDenominator-related)
+    uint8_t        _pad_118C[0x4];         // +0x118C
+    uint64_t       unk_1190;               // +0x1190  (qword: NumSlices-derived bitmask, movq in getGPUInfo)
+    uint8_t        _pad_1198[0x90];        // +0x1198
+    uint64_t       unk_1228;               // +0x1228
+    uint8_t        _pad_1230[0x10];        // +0x1230
+    volatile uint8_t *fMMIOBase;           // +0x1240  MMIO BAR0 mapping
+    uint8_t        _pad_1248[0x44];        // +0x1248
+    uint8_t        fbRegistered;           // +0x128C  set by registerWithFramebufferController
+    uint8_t        _pad_128D[0xF];         // +0x128D
+    uint32_t       unk_129C;               // +0x129C
+    uint8_t        _pad_12A0[0x20];        // +0x12A0
+    uint64_t       fResetRegCount;         // +0x12C0  IGVector.count
+    uint64_t       fResetRegCapacity;      // +0x12C8  IGVector.capacity
+    void          *fResetRegData;          // +0x12D0  IGVector.data (0x24-byte entries)
+    uint8_t        _pad_12D8[0x28];        // +0x12D8
+    uint32_t       unk_1300;               // +0x1300
+    uint8_t        _pad_1304[0x170];       // +0x1304
+    uint32_t       unk_1474;               // +0x1474
+    uint8_t        _pad_1478[0x7DC];       // +0x1478
+    uint32_t       unk_1C54;               // +0x1C54
+};
+// NOTE: total size is a lower bound.
+static_assert(__builtin_offsetof(IntelAccelerator, fNumSlicesMirror)    == 0xDD8,  "IntelAccelerator.fNumSlicesMirror");
+static_assert(__builtin_offsetof(IntelAccelerator, fNumSubSlicesMirror) == 0xDDC,  "IntelAccelerator.fNumSubSlicesMirror");
+static_assert(__builtin_offsetof(IntelAccelerator, fExecutionUnitCount) == 0x1124, "IntelAccelerator.fExecutionUnitCount");
+static_assert(__builtin_offsetof(IntelAccelerator, fFrequencyPair)      == 0x1150, "IntelAccelerator.fFrequencyPair");
+static_assert(__builtin_offsetof(IntelAccelerator, fNumSubSlices)       == 0x1158, "IntelAccelerator.fNumSubSlices");
+static_assert(__builtin_offsetof(IntelAccelerator, fNumSlices)          == 0x115C, "IntelAccelerator.fNumSlices");
+static_assert(__builtin_offsetof(IntelAccelerator, fL3BankCount)        == 0x1164, "IntelAccelerator.fL3BankCount");
+static_assert(__builtin_offsetof(IntelAccelerator, fMaxEUPerSubSlice)   == 0x116C, "IntelAccelerator.fMaxEUPerSubSlice");
+static_assert(__builtin_offsetof(IntelAccelerator, unk_1188)            == 0x1188, "IntelAccelerator.unk_1188");
+static_assert(__builtin_offsetof(IntelAccelerator, unk_1190)            == 0x1190, "IntelAccelerator.unk_1190");
+static_assert(__builtin_offsetof(IntelAccelerator, fMMIOBase)           == 0x1240, "IntelAccelerator.fMMIOBase");
+static_assert(__builtin_offsetof(IntelAccelerator, fbRegistered)        == 0x128C, "IntelAccelerator.fbRegistered");
+static_assert(__builtin_offsetof(IntelAccelerator, fResetRegCount)      == 0x12C0, "IntelAccelerator.fResetRegCount");
+static_assert(__builtin_offsetof(IntelAccelerator, fResetRegCapacity)   == 0x12C8, "IntelAccelerator.fResetRegCapacity");
+static_assert(__builtin_offsetof(IntelAccelerator, fResetRegData)       == 0x12D0, "IntelAccelerator.fResetRegData");
+
+// IGAccelTask — fContext confirmed from IGAccelTask::getBlit3DContext disasm
+// (task+0x298 used throughout kern_gen11.cpp).
+struct IGAccelTask {
+    uint8_t        _pad_0000[0x298];       // +0x0
+    void          *fContext;               // +0x298  IGHardwareExtendedContext*
+};
+// NOTE: total size is a lower bound.
+static_assert(__builtin_offsetof(IGAccelTask, fContext) == 0x298, "IGAccelTask.fContext");
+
+// IGHardwareBlit3DContext — vtable confirmed; unk_0112 from blit3d_init_ctx disasm
+// (movb $0x0, 0x112(%rdi) — byte, NOT uint32_t; total struct size = 0x118 from MetaClass).
+struct IGHardwareBlit3DContext {
+    void          *vtable;                 // +0x0
+    uint8_t        _pad_0008[0x10A];       // +0x8
+    uint8_t        unk_0112;               // +0x112  bool/byte (movb $0x0 in blit3d_init_ctx)
+};
+// NOTE: total size is a lower bound.
+static_assert(__builtin_offsetof(IGHardwareBlit3DContext, vtable)   == 0x0,   "IGHardwareBlit3DContext.vtable");
+static_assert(__builtin_offsetof(IGHardwareBlit3DContext, unk_0112) == 0x112, "IGHardwareBlit3DContext.unk_0112");
+
+// IGHardwareExtendedContextParams — unk_000C from PCode of initWithOptions.
+struct IGHardwareExtendedContextParams {
+    uint8_t        _pad_0000[0xC];         // +0x0
+    uint32_t       unk_000C;               // +0xC
+};
+// NOTE: total size is a lower bound.
+
+// blit3d_params_t — 4 fields from PCode of IntelAccelerator::submitBlit.
+// unk_00A0 confirmed as byte: movzbl 0xa0(%r12) + movb $0x1, 0xa0(%r12) in blit3d_submit_commands.
+struct blit3d_params_t {
+    uint8_t        _pad_0000[0x3C];        // +0x0
+    uint32_t       unk_003C;               // +0x3C
+    uint8_t        _pad_0040[0x44];        // +0x40
+    uint32_t       unk_0084;               // +0x84
+    uint8_t        _pad_0088[0x18];        // +0x88
+    uint8_t        unk_00A0;               // +0xA0  byte (movzbl/movb in blit3d_submit_commands)
+    uint8_t        _pad_00A1[0x17];        // +0xA1
+    uint32_t       unk_00B8;               // +0xB8
+};
+// NOTE: total size is a lower bound.
+
+// IGAccelSegmentResourceList — fields from markBlitUsage/initBlitUsage disasm.
+// Binary evidence: setne 0x78(%rbx) / setne 0x79(%rbx) — both are bools.
+// +0x68 = IGAccelTask* (movq 0x68(%rdi)); +0x70/+0x74 = saved context stamps (uint32_t).
+struct IGAccelSegmentResourceList {
+    uint8_t        _pad_0000[0x68];        // +0x0
+    void          *fTask;                  // +0x68  IGAccelTask* (used by initBlitUsage/markBlitUsage)
+    uint32_t       unk_0070;               // +0x70  saved blit2D context stamp
+    uint32_t       unk_0074;               // +0x74  saved blit3D context stamp
+    uint8_t        unk_0078;               // +0x78  bool: blit2D context changed (setne in markBlitUsage)
+    uint8_t        unk_0079;               // +0x79  bool: blit3D context changed (setne in markBlitUsage)
+};
+// NOTE: total size is a lower bound.
+static_assert(__builtin_offsetof(IGAccelSegmentResourceList, fTask)    == 0x68, "IGAccelSegmentResourceList.fTask");
+static_assert(__builtin_offsetof(IGAccelSegmentResourceList, unk_0070) == 0x70, "IGAccelSegmentResourceList.unk_0070");
+static_assert(__builtin_offsetof(IGAccelSegmentResourceList, unk_0074) == 0x74, "IGAccelSegmentResourceList.unk_0074");
+static_assert(__builtin_offsetof(IGAccelSegmentResourceList, unk_0078) == 0x78, "IGAccelSegmentResourceList.unk_0078");
+static_assert(__builtin_offsetof(IGAccelSegmentResourceList, unk_0079) == 0x79, "IGAccelSegmentResourceList.unk_0079");
+
+// IGAccelSysMemory — opaque; wire/unwire/getPhysicalSegment PCode yielded no
+// constant-offset this-pointer accesses.  Define fields in Ghidra manually.
+struct IGAccelSysMemory {
+    uint8_t        _opaque[1];
+};
+
 } // namespace AppleIntel
 
 #endif // AppleIntelParams_hpp
