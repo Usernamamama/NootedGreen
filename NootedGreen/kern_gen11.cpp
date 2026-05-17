@@ -1389,7 +1389,7 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 					"kextG11HWT Failed to apply RPL-specific patches!");
 
 				// Optional secondary signature for Sonoma variants with long JE encoding.
-				LookupPatchPlus const patchRPLDevstartLong {
+				/*LookupPatchPlus const patchRPLDevstartLong {
 					activeKext,
 					f_devstart_long,
 					m_devstart_long,
@@ -1402,7 +1402,7 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 					SYSLOG("ngreen", "V52: Applied optional long-form deviceStart readiness bypass");
 				} else {
 					SYSLOG("ngreen", "V52: Optional long-form deviceStart bypass not found on this build");
-				}
+				}*/
 
 				// Optional SSE unaligned-store mitigation for blit3d_submit_rectlist.
 				LookupPatchPlus const patchV139Store10 {
@@ -4941,10 +4941,12 @@ void Gen11::populateResetRegisterList(void *that)
 		for (uint64_t i = 0; i < count; i++) {
 			uint32_t *entry = reinterpret_cast<uint32_t*>(data + i * 0x24);
 			uint32_t  addr  = entry[0];
-			if (addr == 0x20ec) {
-				entry[1] = 0x00000000;
-				if (v504Verbose) SYSLOG("ngreen", "V504[%d]: patched CS_DEBUG_MODE1 → 0", v504CallCount);
-			}
+			// V504-TEST: 0x20ec CS_DEBUG_MODE1 patch commented out to test if clearing
+			// Apple's 0x11 (bits 0+4) is needed or harmful on RPL.
+			// if (addr == 0x20ec) {
+			//     entry[1] = 0x00000000;
+			//     if (v504Verbose) SYSLOG("ngreen", "V504[%d]: patched CS_DEBUG_MODE1 → 0", v504CallCount);
+			// }
 			if (addr == 0x2580) {
 				entry[1] = 0x00000002;
 				if (v504Verbose) SYSLOG("ngreen", "V504[%d]: patched CS_CHICKEN1 → 0x2", v504CallCount);
@@ -5370,6 +5372,13 @@ void Gen11::IGHardwareBlit3DContextinitialize(void *that)
 // is ever submitted, so the DMA buffer snapshot captures 0x0000 instead of 0x4000.
 unsigned long Gen11::startGraphicsEngine(void *that)
 {
+	static int startCount = 0;
+
+	if (!NGreen::callback->isRealTGL) {
+		startCount++;
+		applyPreEngineWorkarounds(startCount);
+	}
+
 	unsigned long ret = FunctionCast(startGraphicsEngine, callback->ostartGraphicsEngine)(that);
 
 	if (!NGreen::callback->isRealTGL) {
@@ -5383,9 +5392,64 @@ unsigned long Gen11::startGraphicsEngine(void *that)
 	return ret;
 }
 
+// GT workarounds + pre-engine error clearing applied before every engine start/reset.
+// Called from both startGraphicsEngine (covers Apple's skip-stop path on first init)
+// and stopGraphicsEngine (covers subsequent soft-reset cycles).
+void Gen11::applyPreEngineWorkarounds(int callCount)
+{
+	// ── GT workarounds (gen12_gt_workarounds_init / rcs_engine_wa_init) ──
+	// Applied on every reset — same set as Linux i915 for TGL/ADL-P.
+	/* Wa_14011060649:tgl,rkl,dg1,adl-s,adl-p */
+	NGreen::callback->wa_write_or(VDBOX_CGCTL3F10(RENDER_RING_BASE), IECPUNIT_CLKGATE_DIS);
+	NGreen::callback->wa_write_or(VDBOX_CGCTL3F10(BLT_RING_BASE),    IECPUNIT_CLKGATE_DIS);
+	NGreen::callback->wa_write_or(VDBOX_CGCTL3F10(GEN11_VEBOX_RING_BASE), IECPUNIT_CLKGATE_DIS);
+	/* Wa_14011059788:tgl,rkl,adl-s,dg1,adl-p */
+	NGreen::callback->wa_mcr_write_or(GEN10_DFR_RATIO_EN_AND_CHICKEN, DFR_DISABLE);
+	/* Wa_14015795083 */
+	NGreen::callback->wa_add(GEN7_MISCCPCTL, GEN12_DOP_CLOCK_GATE_RENDER_ENABLE, 0, 0, false);
+	/* Wa_1409142259:tgl,dg1,adl-p */
+	NGreen::callback->wa_masked_en(GEN11_COMMON_SLICE_CHICKEN3, GEN12_DISABLE_CPS_AWARE_COLOR_PIPE);
+	/* WaDisableGPGPUMidThreadPreemption:gen12 */
+	NGreen::callback->wa_masked_field_set(GEN8_CS_CHICKEN1,
+			GEN9_PREEMPT_GPGPU_LEVEL_MASK, GEN9_PREEMPT_GPGPU_THREAD_GROUP_LEVEL);
+	/* MCR selector: slice 0, subslice 0 */
+	NGreen::callback->wa_write_clr_set(GEN8_MCR_SELECTOR,
+			GEN8_MCR_SLICE_MASK | GEN8_MCR_SUBSLICE_MASK,
+			GEN8_MCR_SLICE(0) | GEN8_MCR_SUBSLICE(0));
+	/* rcs_engine_wa_init */
+	NGreen::callback->wa_masked_en(GEN7_FF_SLICE_CS_CHICKEN1, GEN9_FFSC_PERCTX_PREEMPT_CTRL);
+
+	// V71 PRE: clear ERROR_GEN6 and mask EMR
+	{
+		uint32_t preErr = NGreen::callback->readReg32(ERROR_GEN6);
+		if (preErr) {
+			NGreen::callback->writeReg32(ERROR_GEN6, 0x0);
+			SYSLOG("ngreen", "V71[%d]: pre-engine ERR=0x%x cleared", callCount, preErr);
+		}
+		NGreen::callback->writeReg32(RING_EMR(RENDER_RING_BASE), 0xFFFFFFFF);
+		NGreen::callback->writeReg32(RING_EMR(BLT_RING_BASE),    0xFFFFFFFF);
+	}
+
+	// V152: drain and disable BCS ring so Apple sees a clean BCS state
+	{
+		uint32_t bcsTail = NGreen::callback->readReg32(RING_TAIL(BLT_RING_BASE));
+		uint32_t bcsHead = NGreen::callback->readReg32(RING_HEAD(BLT_RING_BASE));
+		uint32_t bcsCtl  = NGreen::callback->readReg32(RING_CTL(BLT_RING_BASE));
+		if (bcsCtl != 0 || bcsHead != bcsTail) {
+			if (bcsHead != bcsTail) {
+				NGreen::callback->writeReg32(RING_TAIL(BLT_RING_BASE), bcsHead);
+				SYSLOG("ngreen", "V152[%d]: BCS drain TAIL 0x%x→0x%x HEAD=0x%x CTL=0x%x",
+					   callCount, bcsTail, bcsHead, bcsHead, bcsCtl);
+			}
+			NGreen::callback->writeReg32(RING_CTL(BLT_RING_BASE), 0x0);
+			SYSLOG("ngreen", "V152[%d]: BCS disabled (CTL was 0x%x)", callCount, bcsCtl);
+		}
+	}
+}
+
 // stopGraphicsEngine is the real GPU reset entry point on this binary (resetGraphicsEngine
-// symbol is absent). All GT workarounds, error clearing, BCS drain, ring snapshots, GDRST,
-// and PERCTX_PREEMPT_CTRL clear that lived in resetGraphicsEngine are ported here.
+// symbol is absent). Stop-specific: ring snapshot, V155 save/restore, V162 PERCTX clear,
+// V71 POST CSB drain. GT workarounds are in applyPreEngineWorkarounds() above.
 unsigned long Gen11::stopGraphicsEngine(void *that)
 {
 	static int   v63ResetCount            = 0;
@@ -5396,54 +5460,7 @@ unsigned long Gen11::stopGraphicsEngine(void *that)
 	if (!NGreen::callback->isRealTGL) {
 		v63ResetCount++;
 
-		// ── GT workarounds (gen12_gt_workarounds_init / rcs_engine_wa_init) ──
-		// Applied on every reset — same set as Linux i915 for TGL/ADL-P.
-		/* Wa_14011060649:tgl,rkl,dg1,adl-s,adl-p */
-		NGreen::callback->wa_write_or(VDBOX_CGCTL3F10(RENDER_RING_BASE), IECPUNIT_CLKGATE_DIS);
-		NGreen::callback->wa_write_or(VDBOX_CGCTL3F10(BLT_RING_BASE),    IECPUNIT_CLKGATE_DIS);
-		NGreen::callback->wa_write_or(VDBOX_CGCTL3F10(GEN11_VEBOX_RING_BASE), IECPUNIT_CLKGATE_DIS);
-		/* Wa_14011059788:tgl,rkl,adl-s,dg1,adl-p */
-		NGreen::callback->wa_mcr_write_or(GEN10_DFR_RATIO_EN_AND_CHICKEN, DFR_DISABLE);
-		/* Wa_14015795083 */
-		NGreen::callback->wa_add(GEN7_MISCCPCTL, GEN12_DOP_CLOCK_GATE_RENDER_ENABLE, 0, 0, false);
-		/* Wa_1409142259:tgl,dg1,adl-p */
-		NGreen::callback->wa_masked_en(GEN11_COMMON_SLICE_CHICKEN3, GEN12_DISABLE_CPS_AWARE_COLOR_PIPE);
-		/* WaDisableGPGPUMidThreadPreemption:gen12 */
-		NGreen::callback->wa_masked_field_set(GEN8_CS_CHICKEN1,
-				GEN9_PREEMPT_GPGPU_LEVEL_MASK, GEN9_PREEMPT_GPGPU_THREAD_GROUP_LEVEL);
-		/* MCR selector: slice 0, subslice 0 */
-		NGreen::callback->wa_write_clr_set(GEN8_MCR_SELECTOR,
-				GEN8_MCR_SLICE_MASK | GEN8_MCR_SUBSLICE_MASK,
-				GEN8_MCR_SLICE(0) | GEN8_MCR_SUBSLICE(0));
-		/* rcs_engine_wa_init */
-		NGreen::callback->wa_masked_en(GEN7_FF_SLICE_CS_CHICKEN1, GEN9_FFSC_PERCTX_PREEMPT_CTRL);
-
-		// V71 PRE: clear ERROR_GEN6 and mask EMR before stop
-		{
-			uint32_t preErr = NGreen::callback->readReg32(ERROR_GEN6);
-			if (preErr) {
-				NGreen::callback->writeReg32(ERROR_GEN6, 0x0);
-				SYSLOG("ngreen", "V71[%d]: pre-stop ERR=0x%x cleared", v63ResetCount, preErr);
-			}
-			NGreen::callback->writeReg32(RING_EMR(RENDER_RING_BASE), 0xFFFFFFFF);
-			NGreen::callback->writeReg32(RING_EMR(BLT_RING_BASE),    0xFFFFFFFF);
-		}
-
-		// V152: drain and disable BCS ring before stop so Apple sees a clean BCS state
-		{
-			uint32_t bcsTail = NGreen::callback->readReg32(RING_TAIL(BLT_RING_BASE));
-			uint32_t bcsHead = NGreen::callback->readReg32(RING_HEAD(BLT_RING_BASE));
-			uint32_t bcsCtl  = NGreen::callback->readReg32(RING_CTL(BLT_RING_BASE));
-			if (bcsCtl != 0 || bcsHead != bcsTail) {
-				if (bcsHead != bcsTail) {
-					NGreen::callback->writeReg32(RING_TAIL(BLT_RING_BASE), bcsHead);
-					SYSLOG("ngreen", "V152[%d]: BCS drain TAIL 0x%x→0x%x HEAD=0x%x CTL=0x%x",
-						   v63ResetCount, bcsTail, bcsHead, bcsHead, bcsCtl);
-				}
-				NGreen::callback->writeReg32(RING_CTL(BLT_RING_BASE), 0x0);
-				SYSLOG("ngreen", "V152[%d]: BCS disabled (CTL was 0x%x)", v63ResetCount, bcsCtl);
-			}
-		}
+		applyPreEngineWorkarounds(v63ResetCount);
 
 		// V155: save RCS CTL while ring is still intact
 		{
