@@ -3950,7 +3950,8 @@ unsigned long Gen11::resetGraphicsEngine(void *that,void *param_1)
 	// V159 confirmed CTX_CTRL is read-only while EL0 is active:
 	// writing CTX_CTRL_FORCE_ABANDON (0x0D) was silently ignored — 0x10->0x10 on readback.
 	// Hardware only evicts the stuck ring-init EL0 context via a domain reset (GDRST).
-	// V160: GDRST is attempted once in the V153 path; this lambda is now just CSB drain.
+	// V164: GDRST is triggered by ghost-active detection in the V153 path; this lambda
+	// is now just CSB drain.
 	auto v158_drainCSB = [&]() {
 		// Advance CSB read pointer to write pointer — consume all pending status entries.
 		uint32_t csbReg   = NGreen::callback->readReg32(RING_CONTEXT_STATUS_PTR(RENDER_RING_BASE));
@@ -4143,29 +4144,37 @@ unsigned long Gen11::resetGraphicsEngine(void *that,void *param_1)
 		if (rcsQuiescent && err == 0) {
 			v154ConsecQuiescentFails++;
 
-			// V160: one-shot GEN6_GDRST render-domain reset.
-			// V159 confirmed CTX_CTRL writes are ignored while EL0 is active.
-			// A hardware domain reset (Linux i915: gen6_hw_domain_reset) is the only
-			// mechanism that can evict the stuck ring-init EL0 context. Apple's
-			// resetGraphicsEngine presumably does something similar but times out due
-			// to an interrupt/CSB-handshake mismatch on RPL; we bypass that by writing
-			// GEN6_GDRST directly. After GDRST the ring CTL is 0 — V155 restores it.
-			static bool v160GdrstFired = false;
-			if (!v160GdrstFired) {
-				v160GdrstFired = true;
-				uint32_t execBefore = NGreen::callback->readReg32(RING_EXECLIST_STATUS(RENDER_RING_BASE));
-				NGreen::callback->writeReg32(GEN6_GDRST, GEN6_GRDOM_RENDER);
-				// Poll for self-clear — hardware sets bit while reset is in progress,
-				// clears it when done. Typically <1 ms; cap at 1000 reads.
-				uint32_t gdrstVal = GEN6_GRDOM_RENDER;
-				int pollCount = 0;
-				while ((gdrstVal & GEN6_GRDOM_RENDER) && pollCount < 1000) {
-					gdrstVal = NGreen::callback->readReg32(GEN6_GDRST);
-					pollCount++;
+			// V164: Detect EXECLIST_STATUS active-with-empty-ring ("ghost context").
+			// If EXECLIST_STATUS bit 0 is set while HEAD==TAIL, the ExecList engine
+			// believes a context is executing but the ring has no commands. This
+			// produces a stuck INSTDONE (e.g. 0xffdffffe — bits 0 and 21 low) that
+			// neither V162 (PERCTX_PREEMPT_CTRL clear) nor V155 (CTL restore) can
+			// resolve, because the ghost EL0 context continuously reloads bad state.
+			// The only remedy is a GEN6_GDRST render-domain reset to forcibly evict
+			// the stale context — same mechanism as Linux i915 gen6_hw_domain_reset.
+			// Fires on every reset call where the ghost condition is detected,
+			// capped at 8 per boot to prevent an infinite GDRST loop.
+			{
+				static int v164GdrstCount = 0;
+				uint32_t execStatus = NGreen::callback->readReg32(RING_EXECLIST_STATUS(RENDER_RING_BASE));
+				const bool ghostActive = (execStatus & 1) && (rcsHead == rcsTail);
+				SYSLOG("ngreen", "V164[%d]: EXECLIST_STATUS=0x%x ghostActive=%d (gdrstsSoFar=%d)",
+					   v63ResetCount, execStatus, ghostActive, v164GdrstCount);
+				if (ghostActive && v164GdrstCount < 8) {
+					v164GdrstCount++;
+					NGreen::callback->writeReg32(GEN6_GDRST, GEN6_GRDOM_RENDER);
+					// Poll for self-clear — hardware sets bit while reset is in progress,
+					// clears it when done. Typically <1 ms; cap at 1000 polls.
+					uint32_t gdrstVal = GEN6_GRDOM_RENDER;
+					int pollCount = 0;
+					while ((gdrstVal & GEN6_GRDOM_RENDER) && pollCount < 1000) {
+						gdrstVal = NGreen::callback->readReg32(GEN6_GDRST);
+						pollCount++;
+					}
+					uint32_t execAfter = NGreen::callback->readReg32(RING_EXECLIST_STATUS(RENDER_RING_BASE));
+					SYSLOG("ngreen", "V164[%d]: GDRST fired #%d poll=%d gdrst=0x%x EXEC 0x%x->0x%x",
+						   v63ResetCount, v164GdrstCount, pollCount, gdrstVal, execStatus, execAfter);
 				}
-				uint32_t execAfter = NGreen::callback->readReg32(RING_EXECLIST_STATUS(RENDER_RING_BASE));
-				SYSLOG("ngreen", "V160[%d]: GDRST render reset poll=%d gdrst=0x%x, EXEC 0x%x->0x%x",
-					   v63ResetCount, pollCount, gdrstVal, execBefore, execAfter);
 			}
 
 			// V155: re-enable the RCS ring — GDRST (and the original reset) leave CTL=0.
@@ -9070,6 +9079,23 @@ void Gen11::populateResetRegisterList(void *that)
 		SYSLOG("ngreen", "V503:  0x2580 CS_CHICKEN1       = 0x%08x", cb->readReg32(0x2580));
 		SYSLOG("ngreen", "V503:  0x20e0 FF_SLICE_CS_CHKN1 = 0x%08x", cb->readReg32(0x20e0));
 		SYSLOG("ngreen", "V503:  0x229c RCS_GFX_MODE      = 0x%08x", cb->readReg32(0x229c));
+	}
+	// V504: patch reset register list before context image bakes
+	// Walk IGVector: each entry = {uint32_t mmio_addr, uint32_t value, char name[0x1c]}
+	static bool v504Patched = false;
+	if (!v504Patched && !NGreen::callback->isRealTGL) {
+		v504Patched = true;
+		auto *accel = reinterpret_cast<AppleIntel::IntelAccelerator*>(that);
+		uint64_t count = accel->fResetRegCount;
+		uint8_t *data  = reinterpret_cast<uint8_t*>(accel->fResetRegData);
+		for (uint64_t i = 0; i < count; i++) {
+			uint32_t *entry = reinterpret_cast<uint32_t*>(data + i * 0x24);
+			uint32_t  addr  = entry[0];
+			// CS_DEBUG_MODE1: clear bits 0+4 (TGL replay mode bits, stall CS on RPL-P)
+			if (addr == 0x20ec) { entry[1] = 0x00000000; SYSLOG("ngreen", "V504: patched CS_DEBUG_MODE1 → 0"); }
+			// CS_CHICKEN1: keep bit1 only (threadgroup preemption), clear bit0 (TGL-only command level)
+			if (addr == 0x2580) { entry[1] = 0x00000002; SYSLOG("ngreen", "V504: patched CS_CHICKEN1 → 0x2"); }
+		}
 	}
 }
 
