@@ -1379,7 +1379,7 @@ private:
 	static uint64_t v116DummyPhys;                  // V116: physical address of dummy page
 	mach_vm_address_t ostart {};
 
-	static bool deviceStart(void *that);   // V111: force IGAccelDevice::deviceStart true on RPL
+	static uint8_t deviceStart(void *that);   // V111: force IGAccelDevice::deviceStart true on RPL
 	mach_vm_address_t odeviceStart {};
 
 	static void *createUserGPUTask(void *that);  // V132: fallback when per-user task creation returns null on spoofed RPL

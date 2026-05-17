@@ -4766,6 +4766,23 @@ unsigned long Gen11::start(void *that,void  *param_1)
 	return ret;
 }
 
+uint8_t Gen11::deviceStart(void *that)
+{
+	// V111: Force IGAccelDevice::deviceStart to succeed on spoofed RPL platform.
+	// The original checks encodeFailureStack[1] which is set when BCS ring fails to
+	// start. On RPL hardware with TGL driver, BCS init fails (RPL uses different
+	// ring programming). We allow the original to run and then force success if it
+	// returned false, preventing CoreDisplay from seeing a null accelerator device.
+	auto ret = FunctionCast(deviceStart, callback->odeviceStart)(that);
+	const bool isRealTGL = NGreen::callback && NGreen::callback->isRealTGL;
+	if (!isRealTGL && !ret) {
+		SYSLOG("ngreen", "V111: IGAccelDevice::deviceStart returned false on RPL — forcing true");
+		return true;
+	}
+	DBGLOG("ngreen", "V111: IGAccelDevice::deviceStart returned %d", ret);
+	return ret;
+}
+
 IOReturn Gen11::wrapPavpSessionCallback( void *intelAccelerator, int32_t sessionCommand, uint32_t sessionAppId, uint32_t *a4, bool flag) {
 
 	//void* pPavpContext = *getMember<void**>(intelAccelerator, 0x1278);
@@ -6339,23 +6356,6 @@ static const uint8_t DAT_000b0bb0[] = {
 	0x00, 0x36, 0x6e, 0x01, 0x00, 0xf8, 0x24, 0x01,
 	0x00, 0xf0, 0x49, 0x02, 0x40, 0x78, 0x7d, 0x01
 };
-
-bool Gen11::deviceStart(void *that)
-{
-	// V111: Force IGAccelDevice::deviceStart to succeed on spoofed RPL platform.
-	// The original checks encodeFailureStack[1] which is set when BCS ring fails to
-	// start. On RPL hardware with TGL driver, BCS init fails (RPL uses different
-	// ring programming). We allow the original to run and then force success if it
-	// returned false, preventing CoreDisplay from seeing a null accelerator device.
-	auto ret = FunctionCast(deviceStart, callback->odeviceStart)(that);
-	const bool isRealTGL = NGreen::callback && NGreen::callback->isRealTGL;
-	if (!isRealTGL && !ret) {
-		SYSLOG("ngreen", "V111: IGAccelDevice::deviceStart returned false on RPL — forcing true");
-		return true;
-	}
-	DBGLOG("ngreen", "V111: IGAccelDevice::deviceStart returned %d", ret);
-	return ret;
-}
 
 bool Gen11::initHardwareCaps(void *this_ptr) {
 		uint32_t gpuSku = getMember<uint32_t>(this_ptr, 0x1120);
@@ -9292,6 +9292,7 @@ void Gen11::endReset(void *that)
 
 //SIGNATURES GFX
 //ulong __thiscall IntelAccelerator::start(IntelAccelerator *this,IOService *param_1)
+//undefined8 __thiscall IGAccelDevice::deviceStart(IGAccelDevice *this)
 //void __thiscall IntelAccelerator::getGPUInfo(IntelAccelerator *this)
 //void IntelAccelerator::getGPUInfo(void)
 //void __thiscall IntelAccelerator::populateResetRegisterList(IntelAccelerator *this)
