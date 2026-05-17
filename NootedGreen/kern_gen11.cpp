@@ -4770,9 +4770,9 @@ IOReturn Gen11::wrapPavpSessionCallback( void *intelAccelerator, int32_t session
 	return FunctionCast(wrapPavpSessionCallback, callback->orgPavpSessionCallback)(intelAccelerator, sessionCommand, sessionAppId, a4, flag);
 }
 
-bool Gen11::getGPUInfoICL(void *that)
+void Gen11::getGPUInfoICL(void *that)
 {
-	auto ret = FunctionCast(getGPUInfoICL, callback->ogetGPUInfoICL)(that);
+	FunctionCast(getGPUInfoICL, callback->ogetGPUInfoICL)(that);
 	
 	// --- GPU topology override for ICL HW binary ---
 	// ICL object layout (verified from AppleIntelICLGraphics.sonoma.bin disassembly):
@@ -4799,13 +4799,11 @@ bool Gen11::getGPUInfoICL(void *that)
 	
 	SYSLOG("ngreen", "getGPUInfoICL: overridden topology → slices=%u subslices=%u maxEU/SS=%u totalEU=%u L3Banks=8",
 		   numSlices, numSubSlices, maxEUPerSubSlice, totalEU);
-	
-	return ret;
 }
 
-bool  Gen11::getGPUInfo(void *that)
+void Gen11::getGPUInfo(void *that)
 {
-	
+
 #define RPM_CONFIG0				(0xd00)
 #define   GEN9_RPM_CONFIG0_CRYSTAL_CLOCK_FREQ_SHIFT	3
 #define   GEN9_RPM_CONFIG0_CRYSTAL_CLOCK_FREQ_MASK	(1 << GEN9_RPM_CONFIG0_CRYSTAL_CLOCK_FREQ_SHIFT)
@@ -4820,9 +4818,8 @@ bool  Gen11::getGPUInfo(void *that)
 #define   GEN10_RPM_CONFIG0_CTC_SHIFT_PARAMETER_SHIFT	1
 #define   GEN10_RPM_CONFIG0_CTC_SHIFT_PARAMETER_MASK	(0x3 << GEN10_RPM_CONFIG0_CTC_SHIFT_PARAMETER_SHIFT)
 	
-	auto ret=FunctionCast(getGPUInfo, callback->ogetGPUInfo)(that);
-	const bool isRealTGL = NGreen::callback && NGreen::callback->isRealTGL;
-	
+	FunctionCast(getGPUInfo, callback->ogetGPUInfo)(that);
+
 	// --- GPU topology override for RPL i7-13700H (verified from Linux i915 syslog) ---
 	// Linux i915 reports: 1 slice, 6 DSS (mask=0x3f), 16 EU/DSS, 96 EU total.
 	// TGL binary uses traditional sub-slices (SS), not dual sub-slices (DSS):
@@ -4853,15 +4850,6 @@ bool  Gen11::getGPUInfo(void *that)
 	SYSLOG("ngreen", "getGPUInfo: overridden topology → slices=%u subslices=%u maxEU/SS=%u totalEU=%u L3Banks=8",
 		   numSlices, numSubSlices, maxEUPerSubSlice, totalEU);
 
-	// On spoofed platforms, do not propagate a false return from the original path,
-	// otherwise accelerator bring-up may abort and cursor/WindowServer init can stall.
-	// Keep real TGL behavior unchanged.
-	if (!isRealTGL && !ret) {
-		SYSLOG("ngreen", "getGPUInfo: forcing success on spoofed CPU (ret=false)");
-		return true;
-	}
-
-	return ret;
 }
 
 // V164: Hook populateResetRegisterList to clear PERCTX_PREEMPT_CTRL before snapshot.

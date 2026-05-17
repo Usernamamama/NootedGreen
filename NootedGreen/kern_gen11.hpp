@@ -1443,10 +1443,10 @@ private:
 	static void setPanelPowerState(void *that,bool param_1);
 	mach_vm_address_t osetPanelPowerState {};
 	
-	static bool  getGPUInfo(void *that);     // patches topology for TGL HW (TGL offsets)
+	static void  getGPUInfo(void *that);     // patches topology for TGL HW (TGL offsets); void per Ghidra
 	mach_vm_address_t ogetGPUInfo {};
-	
-	static bool  getGPUInfoICL(void *that);  // patches topology for ICL HW (ICL offsets)
+
+	static void  getGPUInfoICL(void *that);  // patches topology for ICL HW (ICL offsets); void per Ghidra
 	mach_vm_address_t ogetGPUInfoICL {};
 	
 	static unsigned long fastLinkTraining();
