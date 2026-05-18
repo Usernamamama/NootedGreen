@@ -780,17 +780,15 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 		static const uint8_t f25[]= {0x77, 0x77, 0x00, 0x00};
 		static const uint8_t r25[]= {0x33, 0x00, 0x00, 0x00};
 
-		// Path E (TCON ID): COMMENTED OUT — depends on GFX/AGDC services to actually run
-		// the CamelliaTcon2 init path. With FB-only boot (no GFX kext), making the FB binary
-		// recognise the panel as CamelliaTcon2 causes the FB driver to call into accelerator
-		// services that don't exist → hang during init.
-		// Re-enable only when GFX is loaded (with -ngreentglwithgfx + -allow3d).
-		/*
+		// Path E (TCON ID): guarded by -ngreentglwithgfx boot-arg (requires GFX kext present).
+		// Rewrites CamelliaTcon2/BanksiaTcon DPCD ID comparisons so they match this panel's
+		// DPCD bytes [14 1e c4 c1] → 0xc1c41e14. Also sets cameliav=2 in getOSInformation.
+		// DO NOT enable on FB-only boot (no GFX): calls into AGDC services → hang.
 		static const uint8_t f_tcon_camellia[]= {0x3d, 0x11, 0x0a, 0x84, 0x41};
 		static const uint8_t r_tcon_camellia[]= {0x3d, 0x14, 0x1e, 0xc4, 0xc1};
 		static const uint8_t f_tcon_banksia[] = {0x3d, 0x12, 0x14, 0xc4, 0x41};
 		static const uint8_t r_tcon_banksia[] = {0x3d, 0x14, 0x1e, 0xc4, 0xc1};
-		*/
+		const bool enableTcon = checkKernelArgument("-ngreentglwithgfx");
 
 		if (isprod){
 			LookupPatchPlus const patchesp[] = {// tgl production kext
@@ -826,12 +824,17 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 				{activeKext, f24cp, r24cp, arrsize(f24cp),	1},
 				{activeKext, f24dp, r24dp, arrsize(f24dp),	4},
 				{activeKext, f25,  r25,  arrsize(f25),	6},
-				// Path E: TCON ID rewrite — COMMENTED OUT (depends on GFX, hangs FB-only boot)
-				//{activeKext, f_tcon_camellia, r_tcon_camellia, arrsize(f_tcon_camellia),	1},
-				//{activeKext, f_tcon_banksia,  r_tcon_banksia,  arrsize(f_tcon_banksia),	1},
 			};
 
 			PANIC_COND(!LookupPatchPlus::applyAll(patcher, patchesp , address, size), "ngreen", "kextG11FBT Failed to apply production patches!");
+			if (enableTcon) {
+				LookupPatchPlus const tconPatches[] = {
+					{activeKext, f_tcon_camellia, r_tcon_camellia, arrsize(f_tcon_camellia), 1},
+					{activeKext, f_tcon_banksia,  r_tcon_banksia,  arrsize(f_tcon_banksia),  1},
+				};
+				LookupPatchPlus::applyAll(patcher, tconPatches, address, size);
+				SYSLOG("ngreen", "Path E: TCON ID patches applied (prod)");
+			}
 		}
 		else {
 			LookupPatchPlus const patches[] = {// tgl debug kext
@@ -876,12 +879,17 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 		//		{activeKext, f24c, r24c, arrsize(f24c),	1},
 		//		{activeKext, f24d, r24d, arrsize(f24d),	6},
 		//		{activeKext, f25,  r25,  arrsize(f25),	6},
-				// Path E: TCON ID rewrite — COMMENTED OUT (depends on GFX, hangs FB-only boot)
-				//{activeKext, f_tcon_camellia, r_tcon_camellia, arrsize(f_tcon_camellia),	1},
-				//{activeKext, f_tcon_banksia,  r_tcon_banksia,  arrsize(f_tcon_banksia),	1},
-			};
+				};
 
 			PANIC_COND(!LookupPatchPlus::applyAll(patcher, patches , address, size), "ngreen", "kextG11FBT Failed to apply dbg patches!");
+			if (enableTcon) {
+				LookupPatchPlus const tconPatches[] = {
+					{activeKext, f_tcon_camellia, r_tcon_camellia, arrsize(f_tcon_camellia), 1},
+					{activeKext, f_tcon_banksia,  r_tcon_banksia,  arrsize(f_tcon_banksia),  1},
+				};
+				LookupPatchPlus::applyAll(patcher, tconPatches, address, size);
+				SYSLOG("ngreen", "Path E: TCON ID patches applied (dbg)");
+			}
 		}
 		
 		return true;
@@ -1726,24 +1734,28 @@ bool Gen11::paramsSurfCompare(AppleIntel::AppleIntelBaseController *that,
 		pl2->PLANE_CTL    = (pl2->PLANE_CTL & ~(0x7u << 10));  // bits[12:10] = 000 → linear
 		pl2->PLANE_STRIDE = 0xa0;                               // 2560×4 / 64 = 160 = 0xa0
 	}*/
-	// V408: match what macOS wants — X-tiled (bits[12:10]=001) + X-tile stride.
-	// Apple's IOSurface allocator produces X-tiled buffers; V99G GGTT remap copies the
-	// PTEs to GGTT[0..3999] so SURF=0x0 scans those same physical pages.
-	// Hardware must read in X-tile to match the written layout.
-	//
-	// X-tile stride unit = 512 B.  stride = (width_px × 4 bpp) / 512 = width / 128.
-	// For 2560px: 2560 × 4 / 512 = 20 = 0x14.
-	if (!NGreen::callback->isRealTGL && pl2) {
-		pl2->PLANE_CTL = (pl2->PLANE_CTL & ~(0x7u << 10)) | (0x1u << 10);  // bits[12:10] = 001 → X-tile
-		uint32_t stride = 0x14;             // 2560px default
-		if (p2 && p2->PIPE_SRCSZ) {
-			uint32_t width = ((p2->PIPE_SRCSZ >> 16) & 0xFFFFu) + 1;
-			stride = (width * 4u) / 512u;   // X-tile stride units
-		}
-		pl2->PLANE_STRIDE = stride;
+
+	// Capture Apple's natural values BEFORE any force, for V401 logging.
+	uint32_t nat_ctl_pl1    = pl1 ? pl1->PLANE_CTL    : 0;
+	uint32_t nat_stride_pl1 = pl1 ? pl1->PLANE_STRIDE : 0;
+	uint32_t nat_ctl_pl2    = pl2 ? pl2->PLANE_CTL    : 0;
+	uint32_t nat_stride_pl2 = pl2 ? pl2->PLANE_STRIDE : 0;
+
+	if (NGreen::callback && !NGreen::callback->isRealTGL && pl2) {
+		pl2->PLANE_CTL    = (pl2->PLANE_CTL & ~(0x7u << 10));  // bits[12:10] = 000 → linear
+		pl2->PLANE_STRIDE = 0xa0;                               // 2560×4 / 64 = 160 = 0xa0
 	}
 
 	bool ret = FunctionCast(paramsSurfCompare, callback->oparamsSurfCompare)(that, p1, p2, pl1, pl2);
+
+	SYSLOG("ngreen", "V401, original ret [%d]", ret);
+	// ADL-P: the ICL/TGL driver's SURF-only fast-path (used when paramsSurfCompare returns
+	// false) does not work correctly under this spoof — PLANE_SURF never gets written on
+	// subsequent flips.  Force a full reprogram whenever the surface address actually changes.
+	if (!NGreen::callback->isRealTGL && !ret && pl1 && pl2) {
+		if (pl1->PLANE_SURF != pl2->PLANE_SURF)
+			ret = true;
+	}
 
 	// Real fix for seam scaler 2: Apple reads PIPE_SEAM_EXCESS and PS_PS_WIN_SZ from p2
 	// AFTER paramsSurfCompare returns, to fill the GPU DSB buffer entry for PS_WIN_SZ_2_A
@@ -1770,23 +1782,20 @@ bool Gen11::paramsSurfCompare(AppleIntel::AppleIntelBaseController *that,
 	uint32_t old_src    = p1  ? p1->PIPE_SRCSZ    : 0;
 	uint32_t new_src    = p2  ? p2->PIPE_SRCSZ    : 0;
 
-	/*// PLANE_CTL tiling field is bits[27:23] (mask 0xF800000) per Apple's internal repr.
-	uint32_t old_tile = (old_ctl >> 23) & 0x1F;
-	uint32_t new_tile = (new_ctl >> 23) & 0x1F;
-	old_ctl, old_tile, old_stride, old_surf, old_src,
-	new_ctl, new_tile, new_stride, new_surf, new_src;*/
-	
-	// PLANE_CTL tiling is bits[12:10] (000=linear, 001=X-tile, 100=Tile4).
-	// Bits[27:23] are the pixel format field — not tiling.
-	uint32_t old_tile = (old_ctl >> 10) & 0x7;
-	uint32_t new_tile = (new_ctl >> 10) & 0x7;
+	// PLANE_CTL tiling is bits[12:10]: 000=linear, 001=X-tile, 100=Tile4.
+	uint32_t old_tile     = (old_ctl     >> 10) & 0x7;
+	uint32_t new_tile     = (new_ctl     >> 10) & 0x7;
+	uint32_t nat_tile_pl1 = (nat_ctl_pl1 >> 10) & 0x7;
+	uint32_t nat_tile_pl2 = (nat_ctl_pl2 >> 10) & 0x7;
 
 	SYSLOG("ngreen", "V401[%d]: paramsSurfCompare ret=%d | "
-		   "OLD: CTL=0x%x tile=0x%x STRIDE=0x%x SURF=0x%x SRC=0x%x | "
-		   "NEW: CTL=0x%x tile=0x%x STRIDE=0x%x SURF=0x%x SRC=0x%x",
+		   "OLD: CTL=0x%x tile=%u STRIDE=0x%x SURF=0x%x SRC=0x%x | "
+		   "NEW: CTL=0x%x tile=%u STRIDE=0x%x SURF=0x%x SRC=0x%x | "
+		   "NAT_CTL=0x%x nat_tile_pl1=%u NAT_CTL=0x%x nat_tile_pl2=%u nat_stride_pl1=0x%x nat_stride_pl2=0x%x",
 		   v401Count, ret,
 		   old_ctl, old_tile, old_stride, old_surf, old_src,
-		   new_ctl, new_tile, new_stride, new_surf, new_src);
+		   new_ctl, new_tile, new_stride, new_surf, new_src,
+		   nat_ctl_pl1, nat_tile_pl1, nat_ctl_pl2, nat_tile_pl2, nat_stride_pl1, nat_stride_pl2);
 
 	return ret;
 }
@@ -1934,14 +1943,18 @@ void Gen11::configureColorPipeLine(AppleIntel::AppleIntelPlane *that, AppleIntel
 		if (flipArgs != nullptr)
 			sel = static_cast<uint8_t>(*reinterpret_cast<const uint32_t *>(&flipArgs->flt_001C) >> 24);
 
-		// Suppress HDR precision mode: Apple's TGL driver sets bitmask bit 10 → configurePipeHDRMode
-		// → PIPE_MISC_HDR_MODE_PRECISION (bit 23 = 0x800000). On a standard SDR eDP panel i915 never
-		// sets this (is_hdr_mode = false). With it set but no proper HDR pipeline, the display cycles.
-		// The bitmask lives at FB+0x4248 where FB = *(that+0x68).
+		// DIAG: log the color pipeline bitmask (FB+0x4248) to identify which bit drives PIPE_MISC bit 23.
+		// The bitmask at FB+0x4248 (FB = *(that+0x68)) selects which sub-functions run inside
+		// configureColorPipeLine. Bit 10 = configurePipeHDRMode candidate. Log pre/post to verify.
 		if (that != nullptr) {
 			void *fb = getMember<void *>(that, 0x68);
-			if (fb != nullptr)
+			if (fb != nullptr) {
+				uint32_t bm_before = getMember<uint32_t>(fb, 0x4248);
 				getMember<uint32_t>(fb, 0x4248) &= ~(1u << 10);
+				uint32_t bm_after  = getMember<uint32_t>(fb, 0x4248);
+				SYSLOG("ngreen", "DIAG[BM]: fb=%p bitmask 0x%08x→0x%08x param2=%d",
+				       fb, bm_before, bm_after, (int)param_2);
+			}
 		}
 	}
 
@@ -3070,12 +3083,8 @@ uint64_t Gen11::getOSInformation(AppleIntel::AppleIntelBaseController *that)
 			FB_FLAG_FORCE_POWER_ALWAYS_CONNECTED |
 			FB_FLAG_AVOID_FAST_LINK_TRAINING;
 
-		// Path E: cameliav = 2 (CamelliaTcon2) COMMENTED OUT — depends on GFX/AGDC services.
-		// With FB-only boot, telling the FB driver this panel has CamelliaTcon2 makes init
-		// call into accelerator services that don't exist → hang.
-		// Re-enable to 2 only when -ngreentglwithgfx + -allow3d is used (full GFX path).
-		//pinfo[1].cameliav = 2;
-		pinfo[1].cameliav = 0;  // no TCON (Camellia/Banksia disabled — safe for FB-only)
+		// cameliav=2 (CamelliaTcon2) requires GFX kext present — gate on -ngreentglwithgfx.
+		pinfo[1].cameliav = checkKernelArgument("-ngreentglwithgfx") ? 2 : 0;
 		pinfo[1].fMobile  = 1;
 		// 3/3/3 baseline restored. Multi-pipe reduction is whack-a-mole — every count
 		// reduction reveals new cross-pipe NULL-deref sites in TGL FB internals
