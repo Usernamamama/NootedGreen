@@ -849,10 +849,10 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 				//{activeKext, f4a, r4a, arrsize(f4a),	11},
 				//{activeKext, f4b, r4b, arrsize(f4b),	2},
 				//{activeKext, f4c, r4c, arrsize(f4c),	2},
-				//{activeKext, f6a, r6a, arrsize(f6a),	1},
+		//		{activeKext, f6a, r6a, arrsize(f6a),	1},
 		//		{activeKext, f7, r7, arrsize(f7),	1},
 				// f10 ("hwreg" CALL+JZ→JMP bypass) commented out — NOT in NootedBlue.
-				//{activeKext, f10, r10, arrsize(f10),	1},
+				{activeKext, f10, r10, arrsize(f10),	1},
 				// f13: mandatory. Without this port-probe bypass the spoofed TGL path freezes during boot.
 				{activeKext, f13, r13, arrsize(f13),	1},
 				// f13b: mandatory. Without this bypass AppleIntelPort::probePortStateEv hits
@@ -865,8 +865,8 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 				// Purely cosmetic: no behavioral change, no display-pipe impact.
 				{activeKext, f15, r15, arrsize(f15),	1},
 				//{activeKext, f16, r16, arrsize(f16),	1},
-				//{activeKext, f19, r19, arrsize(f19),	1},
-				//{activeKext, f20, r20, arrsize(f20),	1},
+				{activeKext, f19, r19, arrsize(f19),	1},
+		//		{activeKext, f20, r20, arrsize(f20),	1},
 				//{activeKext, f21, r21, arrsize(f21),	1},
 				//{activeKext, f22, r22, arrsize(f22),    1},
 		//		{activeKext, f6nb, r6nb, arrsize(f6nb),	1},
@@ -1605,6 +1605,7 @@ uint64_t Gen11::AppleIntelPlaneinit(AppleIntel::AppleIntelPlane *that, uint32_t 
 {
 	auto ret = FunctionCast(AppleIntelPlaneinit, callback->oAppleIntelPlaneinit)(that, pipeIndex);
 	getMember<void *>(that, 0x90) = ccont; // fWriteAccessor — ccont must NOT go to real fRegCache at +0x88
+
 	return ret;
 }
 
@@ -1618,6 +1619,7 @@ void Gen11::enablePlane(AppleIntel::AppleIntelPlane *that, bool enable)
 {
 	getMember<void *>(that, 0x90) = ccont; // fWriteAccessor — ccont must NOT go to real fRegCache at +0x88
 	FunctionCast(enablePlane, callback->oenablePlane)(that, enable);
+
 }
 
 void Gen11::programPipeScaler(AppleIntel::AppleIntelScaler *that, AppleIntel::AppleIntelDisplayPath *displayPath)
@@ -1656,6 +1658,7 @@ void Gen11::setupPipeScaler(AppleIntel::AppleIntelScaler *that, AppleIntel::Appl
 	// ccont fixup (same as programPipeScaler) — needed because V204 init hooks
 	// don't always populate ccont; original would crash on this=NULL ccont path.
 	that->fWriteAccessor = ccont;
+
 
 	// Pre-call snapshot — captures values BEFORE setupPipeScaler runs so we can
 	// tell whether THIS function sets PIPE_SEAM_EXCESS=0x1 or whether something
@@ -1742,10 +1745,20 @@ bool Gen11::paramsSurfCompare(AppleIntel::AppleIntelBaseController *that,
 
 	bool ret = FunctionCast(paramsSurfCompare, callback->oparamsSurfCompare)(that, p1, p2, pl1, pl2);
 
+	// Real fix for seam scaler 2: Apple reads PIPE_SEAM_EXCESS and PS_PS_WIN_SZ from p2
+	// AFTER paramsSurfCompare returns, to fill the GPU DSB buffer entry for PS_WIN_SZ_2_A
+	// (0x68274). On a single-pipe ADL-P panel there is no seam scaler 2; if the DSB gets
+	// 0x3fff04f there, the pipeline aborts the flip immediately (param2=0 at V405).
+	// Zeroing here prevents any non-zero seam value from reaching the DSB.
+	if (!NGreen::callback->isRealTGL && p2 != nullptr) {
+		p2->PIPE_SEAM_EXCESS = 0;
+		p2->PS_PS_WIN_SZ     = 0;
+	}
+
 	if (NGreen::callback == nullptr || NGreen::callback->isRealTGL) return ret;
 
 	static int v401Count = 0;
-	if (v401Count >= 8) return ret;
+	if (v401Count >= 20) return ret;
 	++v401Count;
 
 	uint32_t old_ctl    = pl1 ? pl1->PLANE_CTL    : 0;
@@ -1910,23 +1923,33 @@ void Gen11::setupPipeWatermarks(AppleIntel::AppleIntelBaseController *that,
 // we can confirm the hardware actually sees the right values each flip cycle.
 void Gen11::configureColorPipeLine(AppleIntel::AppleIntelPlane *that, AppleIntel::FlipTransactionArgs *flipArgs, bool param_2)
 {
+	static int v405Count = 0;
+
 	uint32_t pre_gamma = 0, pre_misc = 0;
 	uint8_t  sel = 0xFF;
 
 	if (NGreen::callback != nullptr && !NGreen::callback->isRealTGL) {
 		pre_gamma = NGreen::callback->readReg32(0x4A480);  // GAMMA_MODE Pipe A
 		pre_misc  = NGreen::callback->readReg32(0x70030);  // PIPE_MISC  Pipe A
-		// +0x1C is a float rect coordinate, not BPCSelector. Log raw float bits for diagnostic.
 		if (flipArgs != nullptr)
 			sel = static_cast<uint8_t>(*reinterpret_cast<const uint32_t *>(&flipArgs->flt_001C) >> 24);
+
+		// Suppress HDR precision mode: Apple's TGL driver sets bitmask bit 10 → configurePipeHDRMode
+		// → PIPE_MISC_HDR_MODE_PRECISION (bit 23 = 0x800000). On a standard SDR eDP panel i915 never
+		// sets this (is_hdr_mode = false). With it set but no proper HDR pipeline, the display cycles.
+		// The bitmask lives at FB+0x4248 where FB = *(that+0x68).
+		if (that != nullptr) {
+			void *fb = getMember<void *>(that, 0x68);
+			if (fb != nullptr)
+				getMember<uint32_t>(fb, 0x4248) &= ~(1u << 10);
+		}
 	}
 
 	FunctionCast(configureColorPipeLine, callback->oConfigureColorPipeLine)(that, flipArgs, param_2);
 
 	if (NGreen::callback == nullptr || NGreen::callback->isRealTGL) return;
 
-	static int v405Count = 0;
-	if (v405Count >= 8) return;
+	if (v405Count >= 20) return;
 	++v405Count;
 
 	const uint32_t post_gamma = NGreen::callback->readReg32(0x4A480);
@@ -3098,6 +3121,7 @@ int Gen11::handleLinkIntegrityCheck()
 void Gen11::hwInitializeCState(AppleIntel::AppleIntelBaseController *that)
 {
 	SYSLOG("ngreen", "NB-BUILD-V50-ALLOW-METAL");
+
 	int origB48 = getMember<int>(that, 0xB48);
 	int origCE4 = getMember<int>(that, 0xCE4);
 	SYSLOG("ngreen", "hwInitCState B48=%d CE4=%d", origB48, origCE4);
@@ -3448,7 +3472,7 @@ void NGreen::adlpDcExit(const char *caller) {
 
 void Gen11::AppleIntelPowerWellinit(AppleIntel::AppleIntelPowerWell *that, AppleIntel::AppleIntelBaseController *param_1)
 {
-	ccont = param_1->unk_0C40;
+	ccont = param_1->fRegCachePool;
 
 	FunctionCast(AppleIntelPowerWellinit, callback->oAppleIntelPowerWellinit)(that, param_1);
 
@@ -3978,23 +4002,44 @@ unsigned long Gen11::start(void *that,void  *param_1)
 		// Moving the same sequence here so Apple's getBlit3DContext sees a clean ERROR_GEN6.
 		// ForceWake is already held at this point (Pre-start ForceWake ACK logged above).
 		if (errPreStart && !NGreen::callback->isRealTGL) {
-			// 1. Invalidate RCS + BCS TLBs (GEN12_GUC_TLB_INV_CR = 0xcee8)
+			uint32_t ccidBefore = NGreen::callback->readReg32(RING_CCID(RENDER_RING_BASE));
+
+			// 1. GDRST render domain — evicts the stale EFI/firmware context (CCID=0x80)
+			// that keeps re-asserting ERROR_GEN6 into memory invalid in macOS address space.
+			// TLB flush + W1C alone can't win: the broken context re-fires errors immediately.
+			NGreen::callback->writeReg32(GEN6_GDRST, GEN6_GRDOM_RENDER);
+			uint32_t gdrstVal = GEN6_GRDOM_RENDER;
+			int gdrstPoll = 0;
+			while ((gdrstVal & GEN6_GRDOM_RENDER) && gdrstPoll < 2000) {
+				gdrstVal = NGreen::callback->readReg32(GEN6_GDRST);
+				gdrstPoll++;
+			}
+			uint32_t ccidAfter = NGreen::callback->readReg32(RING_CCID(RENDER_RING_BASE));
+			SYSLOG("ngreen", "V55G: pre-start GDRST poll=%d gdrst=0x%x CCID 0x%x->0x%x ERR->0x%x",
+				gdrstPoll, gdrstVal, ccidBefore, ccidAfter,
+				NGreen::callback->readReg32(ERROR_GEN6));
+
+			// Re-acquire ForceWake — GDRST resets the render engine's FW tracking
+			NGreen::callback->writeReg32(FORCEWAKE_RENDER_GEN9, (1 << 16) | 1);
+			IODelay(1000);
+
+			// 2. Invalidate RCS + BCS TLBs (GEN12_GUC_TLB_INV_CR = 0xcee8)
 			NGreen::callback->writeReg32(0xcee8, 0x1);   // RCS TLBs
 			IODelay(500);
 			NGreen::callback->writeReg32(0xcee8, 0x4);   // BCS TLBs
 			IODelay(500);
 			SYSLOG("ngreen", "V55: Pre-start TLB invalidation requested (RCS+BCS)");
 
-			// 2. 5x clear loop — sticky bits release after TLB flush
+			// 3. 5x clear loop — should now succeed with stale context evicted
 			uint32_t errLoop = NGreen::callback->readReg32(ERROR_GEN6);
 			for (int i = 0; i < 5 && errLoop; i++) {
 				NGreen::callback->writeReg32(ERROR_GEN6, errLoop);
 				IODelay(200);
 				errLoop = NGreen::callback->readReg32(ERROR_GEN6);
 			}
-			SYSLOG("ngreen", "V55: Pre-start ERROR_GEN6 after TLB flush + 5x clear = 0x%x", errLoop);
+			SYSLOG("ngreen", "V55: Pre-start ERROR_GEN6 after GDRST + TLB flush + 5x clear = 0x%x", errLoop);
 
-			// 3. Also clear per-engine EIR now that TLBs are flushed
+			// 4. Clear per-engine EIR
 			uint32_t rcsEir = NGreen::callback->readReg32(RING_EIR(RENDER_RING_BASE));
 			uint32_t bcsEir = NGreen::callback->readReg32(RING_EIR(BLT_RING_BASE));
 			if (rcsEir) NGreen::callback->writeReg32(RING_EIR(RENDER_RING_BASE), rcsEir);
