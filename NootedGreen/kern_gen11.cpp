@@ -3840,6 +3840,9 @@ uint8_t Gen11::hwRegsNeedUpdate
 		// likely a wrong hypothesis for the fragmentation symptom in the first place.
 	}
 
+	static int CCount = 0;
+	CCount++;
+	SYSLOG("ngreen", "V97C[%d]: hwRegsNeedUpdate called", CCount);
 	// Return the original result so that register reprogramming proceeds normally.
 	// The lane count mismatch (4→2) that previously broke the display is now fixed
 	// by the computeLaneCount hook forcing 4 lanes.  Without register updates, the
@@ -3858,7 +3861,7 @@ int Gen11::wrapHwSetupMemory(AppleIntel::AppleIntelBaseController *that, AppleIn
 	// has rendered into them yet. If non-zero → some path filled them (EFI GOP carry-over,
 	// CoreDisplay handoff blit, or other).
 	static int v201Count = 0;
-	if (v201Count < 4 && NGreen::callback) {
+	if (v201Count < 8 && NGreen::callback) {
 		uint32_t surfAddr = getMember<uint32_t>(fb, 0x4330);
 		uint32_t fbSize   = getMember<uint32_t>(fb, 0x4334);
 		uint8_t  fbIdx    = getMember<uint8_t>(fb,  0x4288);
@@ -3874,9 +3877,18 @@ int Gen11::wrapHwSetupMemory(AppleIntel::AppleIntelBaseController *that, AppleIn
 			bar   = fb32[0x9C7800 / 4];  // (1280,1000) loading-bar row
 			mid   = fb32[0x7D1A00 / 4];  // (640,800) mid-left of logo area
 		}
+		// V201P: read GGTT PTE for the surface page — verifies display controller can access it.
+		// GGTT PTE LO/HI at 0x100000 + page*8. Valid PTE: bit0=present, bit3=LLC-coherent.
+		uint32_t pteLo = 0, pteHi = 0;
+		if (surfAddr && NGreen::callback->mmioValid()) {
+			uint32_t surfPage = surfAddr >> 12;
+			pteLo = NGreen::callback->readReg32(0x100000 + surfPage * 8);
+			pteHi = NGreen::callback->readReg32(0x100004 + surfPage * 8);
+		}
 		v201Count++;
-		SYSLOG("ngreen", "V201[%d]: hwSetupMemory ret=0x%x fb=%p surf=0x%x size=0x%x idx=%u tile=%u | tl=%08x ctr=%08x bar=%08x mid=%08x",
-			   v201Count, ret, fb, surfAddr, fbSize, fbIdx, yTileFlg, tlCtr, ctr, bar, mid);
+		SYSLOG("ngreen", "V201[%d]: hwSetupMemory ret=0x%x fb=%p surf=0x%x size=0x%x idx=%u tile=%u | tl=%08x ctr=%08x bar=%08x mid=%08x | PTE=%08x:%08x(present=%d llc=%d)",
+			   v201Count, ret, fb, surfAddr, fbSize, fbIdx, yTileFlg, tlCtr, ctr, bar, mid,
+			   pteHi, pteLo, pteLo & 1, (pteLo >> 3) & 1);
 	}
 
 	return ret;
@@ -4385,11 +4397,12 @@ unsigned long Gen11::start(void *that,void  *param_1)
 		NGreen::callback->readReg32(GEN11_RCS0_RSVD_INTR_MASK),
 		NGreen::callback->readReg32(GEN11_BCS_RSVD_INTR_MASK));
 	
-	// V42: Clear pending GT interrupts so we can detect fresh ones in hangcheck
+	// V42: Log pending GT interrupts — do NOT clear (W1C would discard the tier-2 IIR
+	// user-interrupt for the stamp(8,3) that V221 faked; the now-installed handler needs
+	// to service it naturally so the cpu-side stamp counter is actually bumped).
 	uint32_t gt0 = NGreen::callback->readReg32(0x190018);
 	if (gt0) {
-		NGreen::callback->writeReg32(0x190018, gt0);  // W1C — write-1-to-clear
-		SYSLOG("ngreen", "V42: cleared GT_INTR_DW0=0x%x", gt0);
+		SYSLOG("ngreen", "V42: GT_INTR_DW0 pending=0x%x (leaving for handler)", gt0);
 	}
 	
 	// V42: Enumerate accelerator children to check if IOAccelDevice was created
@@ -4550,14 +4563,14 @@ unsigned long Gen11::start(void *that,void  *param_1)
 		// -ngreenexp — without it, the display pipe is not terminated after opening.
 		if (!NGreen::callback->isRealTGL) {
 			// 8. V59: Schedule delayed child checks to rescue stuck IGAccelDevice children.
-		v45ScheduleDelayedCheck(that, 3000);
-		v45ScheduleDelayedCheck(that, 10000);
-		v45ScheduleDelayedCheck(that, 15000);
-		v45ScheduleDelayedCheck(that, 20000);
-		v45ScheduleDelayedCheck(that, 30000);
-		v45ScheduleDelayedCheck(that, 60000);
-		v45ScheduleDelayedCheck(that, 120000);
-		SYSLOG("ngreen", "V59: scheduled delayed child checks at T+3,10,15,20,30,60,120s");
+			v45ScheduleDelayedCheck(that, 3000);
+			v45ScheduleDelayedCheck(that, 10000);
+			v45ScheduleDelayedCheck(that, 15000);
+			v45ScheduleDelayedCheck(that, 20000);
+			v45ScheduleDelayedCheck(that, 30000);
+			v45ScheduleDelayedCheck(that, 60000);
+			v45ScheduleDelayedCheck(that, 120000);
+			SYSLOG("ngreen", "V59: scheduled delayed child checks at T+3,10,15,20,30,60,120s");
 			// V74: Start PERMANENT EMR enforcer — 50ms interval, runs forever.
 			// Required: keeps EMR masked so Apple can't re-enable error interrupts.
 			// Without this the display pipe fails to activate entirely (all-black screen).
@@ -6915,7 +6928,7 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 	// 4. Count children + find IGAccelDevice state
 	int childCount = 0;
 	uint64_t accelDevState = 0xDEAD;
-	if (v60Aggressive) {
+	/*if (v60Aggressive) {
 		OSIterator *iter = svc->getClientIterator();
 		if (iter) {
 			OSObject *obj;
@@ -6931,10 +6944,10 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 			}
 			iter->release();
 		}
-	}
+	}*/
 	
 	// V70: Track child transitions — dump all children when count or accelDev state changes
-	if (v60Aggressive) {
+	/*if (v60Aggressive) {
 		static int lastChildCount = -1;
 		static uint64_t lastAccelDevState = 0xBEEF;
 		if (childCount != lastChildCount || accelDevState != lastAccelDevState) {
@@ -6980,7 +6993,7 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 			lastChildCount = childCount;
 			lastAccelDevState = accelDevState;
 		}
-	}
+	}*/
 	
 	// V78/V77: DisplayPipe terminator — DISABLED.
 	// V115+V116 now prevent the Blit3D MCE that caused GPU rendering failure.
@@ -7019,14 +7032,9 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 	}
 	*/
 
-	if (v60Count == 1) {
-		SYSLOG("ngreen", "V60: monitor mode=%s (use -ngreenv60rw for active MMIO writes)",
-			   v60Aggressive ? "aggressive" : "read-only");
-	}
-
 	// 5. V60: error suppression path. Default is read-only for stability.
 	// Use -ngreenv60rw to enable active register writes during monitor ticks.
-	if (v60Aggressive) {
+	/*if (v60Aggressive) {
 		if (realErr) {
 			NGreen::callback->writeReg32(ERROR_GEN6, 0x0);
 		}
@@ -7063,11 +7071,11 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 				SYSLOG("ngreen", "V79[%d]: already linear CTL=0x%x STRIDE=0x%x", v60Count, planCtl, planStrd);
 			}
 		}
-	}
+	}*/
 
 	// 5. V60: ACTIVE error suppression (V57 proven approach)
 	//    Keep this write path strictly opt-in via -ngreenv60rw.
-	if (v60Aggressive) {
+	/*if (v60Aggressive) {
 		if (realErr) {
 			NGreen::callback->writeReg32(ERROR_GEN6, 0x0);
 		}
@@ -7075,7 +7083,7 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 		if (emr != 0xFFFFFFFF) {
 			NGreen::callback->writeReg32(RING_EMR(RENDER_RING_BASE), 0xFFFFFFFF);
 		}
-	}
+	}*/
 	
 	// 6. Log with ring + CSB focus
 	uint32_t postErr = NGreen::callback->readReg32(ERROR_GEN6);
@@ -7308,7 +7316,7 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 	// V65: Enforce RCS0 interrupt enable on EVERY iteration (moved from V64 iteration 5).
 	// V64 proved the fix at T+10s was too late — scheduler already gave up.
 	// Now combined with V65 pre-start + V65W watchdog fixes for full coverage.
-	if (v60Aggressive) {
+	/*if (v60Aggressive) {
 		uint32_t rcIntrEn = NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE);
 		uint32_t rcsMask  = NGreen::callback->readReg32(GEN11_RCS0_RSVD_INTR_MASK);
 		
@@ -7331,7 +7339,7 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 				SYSLOG("ngreen", "V65M[%d]: tier-2 fix mask 0x%x->0x%x", v60Count, rcsMask, newMask);
 			}
 		}
-	}
+	}*/
 	
 	// ── V79: Plane monitor (strictly read-only) ──
 	// Any plane-format writes here have caused either WS crash loops or WS hangs.
@@ -7354,7 +7362,7 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 	// The old copy only reached brief first-light when the experimental path forced
 	// the scanout plane to linear and re-armed PLANE_SURF. Keep the default path
 	// read-only; restore the old behavior only with -ngreenexp.
-	if (isExperimentalMonitorEnabled() && v60Aggressive ) {
+	/*if (isExperimentalMonitorEnabled() && v60Aggressive ) {
 		if (v60Count <= 5 || v60Count == 10 || v60Count == 20 || v60Count == 30) {
 			uint32_t planCtl  = NGreen::callback->readReg32(0x70180); // PLANE_CTL
 			uint32_t planStrd = NGreen::callback->readReg32(0x70188); // PLANE_STRIDE
@@ -7413,7 +7421,7 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 				}
 			}
 		}
-	}
+	}*/
 
 	// ── V75: Display pipeline register dump — diagnose black screen ──
 	// System stays alive but display is black. Read pipe/plane/transcoder/backlight
@@ -7612,7 +7620,7 @@ void Gen11::v60GpuHealthMonitor(thread_call_param_t param0, thread_call_param_t 
 	// In dp0 mode V88 is harmful: readReg32(PLANE_SURF) returns the hardware echo of
 	// setupScanoutMemory's 0x412be000 write (before V99S redirects it), causing V88[5]'s
 	// plane toggle to arm with the wrong SURF and fill non-aperture pages with color bands.
-	if (isExperimentalMonitorEnabled() && isV88ScanoutFillEnabled() && !isDisplayPipeForceDisabled() && v60Count >= 1 && v60Count <= 30) {
+	if (isExperimentalMonitorEnabled() && isV88ScanoutFillEnabled() && v60Count >= 1 && v60Count <= 30) {
 		uint32_t surfAddr = NGreen::callback->readReg32(0x7019C);
 		uint32_t surfPage = surfAddr >> 12;
 
