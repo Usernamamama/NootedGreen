@@ -4980,13 +4980,7 @@ void Gen11::populateResetRegisterList(void *that)
 			(GEN9_FFSC_PERCTX_PREEMPT_CTRL << 16) | 0);
 		SYSLOG("ngreen", "V164: pre-snapshot clear FF_SLICE_CS_CHICKEN1=0x%08x",
 			NGreen::callback->readReg32(GEN7_FF_SLICE_CS_CHICKEN1));
-		// V507-pre: set GFX_RUN_LIST_ENABLE BEFORE the snapshot so Apple bakes 0x8000
-		// into fResetRegData instead of 0x0. Previously V507 fired post-snapshot (too late).
-		// RING_MODE uses Intel masked-write: hi16=mask, lo16=value. 0x80008000 = set bit15.
-		uint32_t rmBefore = NGreen::callback->readReg32(RING_MODE(RENDER_RING_BASE));
-		NGreen::callback->writeReg32(RING_MODE(RENDER_RING_BASE), 0x80008000u);
-		SYSLOG("ngreen", "V507-pre: RING_MODE pre-snapshot 0x%08x → readback 0x%08x",
-			rmBefore, NGreen::callback->readReg32(RING_MODE(RENDER_RING_BASE)));
+
 	}
 	FunctionCast(populateResetRegisterList, callback->opopulateResetRegisterList)(that);
 
