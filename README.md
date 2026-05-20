@@ -1,3 +1,7 @@
+# Kexts
+
+This forks merges and release the nootedgreen, nothing else changed.
+
 # NootedGreen
 
 Lilu plugin for Intel iGPU acceleration on macOS — Haswell through Raptor Lake, via Tiger Lake driver spoofing.
