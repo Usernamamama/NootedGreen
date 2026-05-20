@@ -8,6 +8,7 @@
 #include "IntelDPLinkTraining.hpp"
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOCatalogue.h>
+#include <IOKit/IOLib.h>
 #include <kern/thread_call.h>
 
 // ==== 6 kextInfos: ICL fallback + dual TGL identities (com.xxxxx and com.apple) from /Library/Extensions ====
@@ -3878,12 +3879,12 @@ int Gen11::wrapHwSetupMemory(AppleIntel::AppleIntelBaseController *that, AppleIn
 			mid   = fb32[0x7D1A00 / 4];  // (640,800) mid-left of logo area
 		}
 		// V201P: read GGTT PTE for the surface page — verifies display controller can access it.
-		// GGTT PTE LO/HI at 0x100000 + page*8. Valid PTE: bit0=present, bit3=LLC-coherent.
+		// GGTT PTE LO/HI at GEN8_GGTT_PTE_BASE(0x800000) + page*8. Valid: bit0=present, bit3=LLC.
 		uint32_t pteLo = 0, pteHi = 0;
 		if (surfAddr && NGreen::callback->mmioValid()) {
 			uint32_t surfPage = surfAddr >> 12;
-			pteLo = NGreen::callback->readReg32(0x100000 + surfPage * 8);
-			pteHi = NGreen::callback->readReg32(0x100004 + surfPage * 8);
+			pteLo = NGreen::callback->readReg32(GGTT_PTE_LO(surfPage));
+			pteHi = NGreen::callback->readReg32(GGTT_PTE_HI(surfPage));
 		}
 		v201Count++;
 		SYSLOG("ngreen", "V201[%d]: hwSetupMemory ret=0x%x fb=%p surf=0x%x size=0x%x idx=%u tile=%u | tl=%08x ctr=%08x bar=%08x mid=%08x | PTE=%08x:%08x(present=%d llc=%d)",
@@ -5021,6 +5022,17 @@ void Gen11::populateResetRegisterList(void *that)
 			if (addr == 0x2580) {
 				entry[1] = 0x00000002;
 				if (v504Verbose) SYSLOG("ngreen", "V504[%d]: patched CS_CHICKEN1 → 0x2", v504CallCount);
+			}
+			// V506: The populateResetRegisterList snapshot reads RING_MODE before Apple enables
+			// GFX_RUN_LIST_ENABLE (bit 15), so the baked value is 0x0.  On first lite-restore
+			// the MI_LRI replays RING_MODE=0, which clears GFX_RUN_LIST_ENABLE mid-restore —
+			// the ExecList state machine disables itself and the context never reaches ACTIVE.
+			// Fix: force bit 15 in the image so every context restore re-arms ExecList mode.
+			if (addr == 0x229c) {
+				uint32_t old = entry[1];
+				entry[1] |= (1u << 15);  // GFX_RUN_LIST_ENABLE
+				if (v504Verbose) SYSLOG("ngreen", "V504[%d]: V506 RING_MODE 0x%08x → 0x%08x (GFX_RUN_LIST_ENABLE forced)",
+					v504CallCount, old, entry[1]);
 			}
 		}
 	}
@@ -8253,10 +8265,115 @@ void Gen11::forceWake(void *that, bool set, uint32_t dom, uint8_t ctx) {
 			NGreen::callback->readReg32(RING_EIR(RENDER_RING_BASE)),
 			NGreen::callback->readReg32(RING_ESR(RENDER_RING_BASE)),
 			NGreen::callback->readReg32(RING_EMR(RENDER_RING_BASE)));
-		SYSLOG("ngreen", "HANGCHECK RCS EXECLIST_STATUS=0x%x CTX_STATUS_PTR=0x%x",
-			NGreen::callback->readReg32(RING_EXECLIST_STATUS(RENDER_RING_BASE)),
-			NGreen::callback->readReg32(RING_CONTEXT_STATUS_PTR(RENDER_RING_BASE)));
-		
+		// V203: EXECLIST_STATUS is a 64-bit context descriptor echo.
+		// LRCA GGTT byte address = full64 & ~0xFFF  (bits[11:0] are context flags).
+		// Must combine both words — the upper 12 bits of the GGTT address live in elsHi bits[11:0].
+		// RING_MODE bit15 = GFX_RUN_LIST_ENABLE; if 0, ExecList submissions are silently dropped.
+		{
+			uint32_t rcsMode = NGreen::callback->readReg32(RING_MODE(RENDER_RING_BASE));
+			SYSLOG("ngreen", "HANGCHECK V205: RING_MODE=0x%x GFX_RUN_LIST_ENABLE=%d",
+				rcsMode, !!(rcsMode & (1u << 15)));
+			uint32_t elsLo = NGreen::callback->readReg32(RING_EXECLIST_STATUS(RENDER_RING_BASE));
+			uint32_t elsHi = NGreen::callback->readReg32(RENDER_RING_BASE + 0x238);
+			uint32_t hws   = NGreen::callback->readReg32(RING_HWS_PGA(RENDER_RING_BASE));
+			// Correct LRCA extraction: descriptor is 64-bit, LRCA = full64 & ~0xFFF.
+			// Using only elsLo gives the wrong address (e.g. 0x18000 instead of 0x40018000).
+			uint64_t fullDesc = ((uint64_t)elsHi << 32) | elsLo;
+			uint32_t lrcaGgtt = (uint32_t)(fullDesc & ~0xFFFULL);
+			SYSLOG("ngreen", "HANGCHECK RCS EXECLIST_STATUS=0x%08x:%08x lrca_ggtt=0x%x HWS_PGA=0x%x",
+				elsHi, elsLo, lrcaGgtt, hws);
+			// V204: Context Status Buffer — each entry records what happened to submitted contexts.
+			// Entry status bits[2:0]: 1=idle, 2=active, 4=preempted, 8=element-switch, 0x10=complete.
+			// wr_ptr advances after each event; rd_ptr is the software "consumed up to here" pointer.
+			{
+				uint32_t csp = NGreen::callback->readReg32(RING_CONTEXT_STATUS_PTR(RENDER_RING_BASE));
+				uint32_t wrPtr = (csp >> 8) & 0x7;
+				uint32_t rdPtr = csp & 0x7;
+				SYSLOG("ngreen", "HANGCHECK V204: CSB CTX_STATUS_PTR=0x%x wr=%d rd=%d",
+					csp, wrPtr, rdPtr);
+				for (int i = 0; i < 6; i++) {
+					uint32_t csbHi = NGreen::callback->readReg32(RING_CONTEXT_STATUS_BUF_HI(RENDER_RING_BASE, i));
+					uint32_t csbLo = NGreen::callback->readReg32(RING_CONTEXT_STATUS_BUF(RENDER_RING_BASE, i));
+					SYSLOG("ngreen", "HANGCHECK V204: CSB[%d]=%08x:%08x ctx_id=%d status=0x%x%s",
+						i, csbHi, csbLo,
+						(csbLo >> 8) & 0xFF,
+						csbLo & 0xFF,
+						(csbLo & 0x10) ? " COMPLETE" :
+						(csbLo & 0x08) ? " ELEMENT_SWITCH" :
+						(csbLo & 0x04) ? " PREEMPTED" :
+						(csbLo & 0x02) ? " ACTIVE" :
+						(csbLo & 0x01) ? " IDLE" : " (empty/unknown)");
+				}
+			}
+			// V204: Read PTE for the HWS page — if HWS isn't mapped, CS completion writes fault.
+			// Also read PTE for the legacy RING_START page (the preamble ring buffer).
+			if (hws) {
+				uint32_t hwsPg  = hws >> 12;
+				uint32_t hwsPLo = NGreen::callback->readReg32(GGTT_PTE_LO(hwsPg));
+				uint32_t hwsPHi = NGreen::callback->readReg32(GGTT_PTE_HI(hwsPg));
+				SYSLOG("ngreen", "HANGCHECK V204: HWS PTE[page 0x%x]=%08x:%08x present=%d llc=%d",
+					hwsPg, hwsPHi, hwsPLo, hwsPLo & 1, (hwsPLo >> 3) & 1);
+			} else {
+				SYSLOG("ngreen", "HANGCHECK V204: HWS_PGA=0 (status page NOT set up!)");
+			}
+			{
+				uint32_t rStart = NGreen::callback->readReg32(RING_START(RENDER_RING_BASE));
+				if (rStart) {
+					uint32_t rPg  = rStart >> 12;
+					uint32_t rPLo = NGreen::callback->readReg32(GGTT_PTE_LO(rPg));
+					uint32_t rPHi = NGreen::callback->readReg32(GGTT_PTE_HI(rPg));
+					SYSLOG("ngreen", "HANGCHECK V204: RING_START PTE[page 0x%x]=%08x:%08x present=%d llc=%d",
+						rPg, rPHi, rPLo, rPLo & 1, (rPLo >> 3) & 1);
+				}
+			}
+			// V205: Dump LRCA via aperture remap — no IOMappedRead32, no PTE range issue.
+			// Temporarily point GGTT page 0 at each LRCA page, read via aperturePtr[0],
+			// then restore. GPU is hung so clobbering GGTT[0] momentarily is safe.
+			if (lrcaGgtt) {
+				uint32_t lPg0 = lrcaGgtt >> 12;
+				uint32_t lPg1 = lPg0 + 1;
+				uint32_t p0Lo = NGreen::callback->readReg32(GGTT_PTE_LO(lPg0));
+				uint32_t p0Hi = NGreen::callback->readReg32(GGTT_PTE_HI(lPg0));
+				uint32_t p1Lo = NGreen::callback->readReg32(GGTT_PTE_LO(lPg1));
+				uint32_t p1Hi = NGreen::callback->readReg32(GGTT_PTE_HI(lPg1));
+				SYSLOG("ngreen", "HANGCHECK V205: LRCA ggtt=0x%x pg0 PTE=%08x:%08x present=%d | pg1 PTE=%08x:%08x present=%d",
+					lrcaGgtt, p0Hi, p0Lo, p0Lo & 1, p1Hi, p1Lo, p1Lo & 1);
+				NGreen::callback->setApertureIfNecessary();
+				if (NGreen::callback->aperturePtr && NGreen::callback->apertureLen >= 0x2000 &&
+				    (p0Lo & 1) && (p1Lo & 1))
+				{
+					volatile uint32_t *ap = NGreen::callback->aperturePtr;
+					uint32_t saveLo = NGreen::callback->readReg32(GGTT_PTE_LO(0));
+					uint32_t saveHi = NGreen::callback->readReg32(GGTT_PTE_HI(0));
+					// Remap GGTT[0] → LRCA page0 (PPHWSP)
+					NGreen::callback->writeReg32(GGTT_PTE_LO(0), p0Lo);
+					NGreen::callback->writeReg32(GGTT_PTE_HI(0), p0Hi);
+					NGreen::callback->writeReg32(0x101008, 0x1);
+					SYSLOG("ngreen", "HANGCHECK V205: LRCA page0 (PPHWSP) DW0..31:");
+					for (int i = 0; i < 8; i++)
+						SYSLOG("ngreen", "HANGCHECK V205: LRCA[%02d-%02d] %08x %08x %08x %08x",
+							i*4, i*4+3, ap[i*4], ap[i*4+1], ap[i*4+2], ap[i*4+3]);
+					// Remap GGTT[0] → LRCA page1 (ctx-reg-image)
+					NGreen::callback->writeReg32(GGTT_PTE_LO(0), p1Lo);
+					NGreen::callback->writeReg32(GGTT_PTE_HI(0), p1Hi);
+					NGreen::callback->writeReg32(0x101008, 0x1);
+					SYSLOG("ngreen", "HANGCHECK V205: LRCA page1 (ctx-reg-image) DW0..63:");
+					for (int i = 0; i < 16; i++)
+						SYSLOG("ngreen", "HANGCHECK V205: LRCA+1K[%02d-%02d] %08x %08x %08x %08x",
+							i*4, i*4+3, ap[i*4], ap[i*4+1], ap[i*4+2], ap[i*4+3]);
+					// Restore GGTT[0]
+					NGreen::callback->writeReg32(GGTT_PTE_LO(0), saveLo);
+					NGreen::callback->writeReg32(GGTT_PTE_HI(0), saveHi);
+					NGreen::callback->writeReg32(0x101008, 0x1);
+				} else {
+					SYSLOG("ngreen", "HANGCHECK V205: remap skipped aper=%s len=0x%llx p0=%d p1=%d",
+						NGreen::callback->aperturePtr ? "ok" : "null",
+						(unsigned long long)NGreen::callback->apertureLen,
+						p0Lo & 1, p1Lo & 1);
+				}
+			}
+		}
+
 		// BCS ring state (with proper Blitter ForceWake held!)
 		SYSLOG("ngreen", "HANGCHECK BCS HEAD=0x%x TAIL=0x%x CTL=0x%x START=0x%x",
 			NGreen::callback->readReg32(RING_HEAD(BLT_RING_BASE)),
@@ -8300,7 +8417,30 @@ void Gen11::forceWake(void *that, bool set, uint32_t dom, uint8_t ctx) {
 			SYSLOG("ngreen", "HANGCHECK V47: Master IRQ disabled! Re-enabling...");
 			NGreen::callback->writeReg32(GEN11_GFX_MSTR_IRQ, GEN11_MASTER_IRQ);
 		}
-		
+
+		// V202: GGTT PTE verification — ForceWake is held so reads are reliable.
+		// GGTT[0] (stolen memory base) MUST have a valid PTE — if it shows 0 here
+		// then either stolen memory was never mapped (fatal) or the base address is wrong.
+		// PLANE_SURF PTE reveals whether the display engine can actually DMA the surface.
+		{
+			uint32_t pte0Lo = NGreen::callback->readReg32(GGTT_PTE_LO(0));
+			uint32_t pte0Hi = NGreen::callback->readReg32(GGTT_PTE_HI(0));
+			SYSLOG("ngreen", "HANGCHECK V202: GGTT[0] (stolen base) PTE=%08x:%08x present=%d llc=%d",
+				pte0Hi, pte0Lo, pte0Lo & 1, (pte0Lo >> 3) & 1);
+
+			// Display registers don't need GT ForceWake — read live PLANE_SURF.
+			uint32_t hcSurf = NGreen::callback->readReg32(0x7019C);
+			if (hcSurf) {
+				uint32_t surfPg  = hcSurf >> 12;
+				uint32_t surfPLo = NGreen::callback->readReg32(GGTT_PTE_LO(surfPg));
+				uint32_t surfPHi = NGreen::callback->readReg32(GGTT_PTE_HI(surfPg));
+				SYSLOG("ngreen", "HANGCHECK V202: PLANE_SURF=0x%x (page 0x%x) PTE=%08x:%08x present=%d llc=%d",
+					hcSurf, surfPg, surfPHi, surfPLo, surfPLo & 1, (surfPLo >> 3) & 1);
+			} else {
+				SYSLOG("ngreen", "HANGCHECK V202: PLANE_SURF=0 (display armed to null)");
+			}
+		}
+
 		// Release ForceWake
 		NGreen::callback->writeReg32(FORCEWAKE_RENDER_GEN9, (1 << 16) | 0);
 		NGreen::callback->writeReg32(FORCEWAKE_BLITTER_GEN9, (1 << 16) | 0);
