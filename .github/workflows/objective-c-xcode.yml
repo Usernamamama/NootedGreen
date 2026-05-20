@@ -43,11 +43,9 @@ jobs:
         run: |
           cd build/Build/Products/Debug* || cd build/Build/Products/Release* || cd build/Build/Products/*
           
-          echo "Buscando archivos .kext..."
           ls -d *.kext
           
-          zip -r -y ../../../kexts-output.zip *.kext
-          echo "Kexts empaquetadas con éxito en kexts-output.zip"
+          zip -r -y ../../../nootedgreen.zip *.kext
 
       - name: Create and Upload to GitHub Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -57,6 +55,6 @@ jobs:
           TAG_NAME="build-$(date +'%Y.%m.%d')-b${{ github.run_number }}"
           
           echo "Generating: $TAG_NAME..."
-          gh release create "$TAG_NAME" build/kexts-output.zip \
+          gh release create "$TAG_NAME" build/nootedgreen.zip \
             --title "Kext Release $TAG_NAME" \
             --notes "Autobuild for (.kext) commit: ${{ github.sha }}."
