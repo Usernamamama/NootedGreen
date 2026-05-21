@@ -123,7 +123,7 @@ FB-only:
 
 FB+GFX:
 ```
--v keepsyms=1 debug=0x100 IGLogLevel=8 -ngreentglwithgfx -NGreenDebug liludump=250 msgbuf=725288 liludbuf=725288 ngreen-dmc=adlp -ngreenv189 -allow3d -disablegfxfirmware -ngreenfullmtlcore -ngreenexp -ngreenv60 -ngreenv88
+-v keepsyms=1 debug=0x100 IGLogLevel=8 -ngreentglwithgfx -NGreenDebug liludump=250 msgbuf=725288 liludbuf=725288 ngreen-dmc=adlp -ngreenv189 -allow3d -disablegfxfirmware -ngreenfullmtlcore
 ```
 
 Where:
