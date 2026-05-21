@@ -1079,6 +1079,10 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 			 // channel / ring buffer allocation) and dump LRCA page1 via wbinvd+aperture right
 			 // after initWithOptions writes it — determines if RING_START=0 is real or LLC artifact.
 			 {"__ZN17IGHardwareContext11withOptionsEP11IGAccelTaskRK23IGHardwareContextParamsh", IGHardwareContextwithOptions, this->oIGHardwareContextwithOptions},
+			 // V509: Hook base-class IGHardwareContext::initWithOptions — repair LRCA page1 when
+			 // restoreFromSafeImage skips g_cInitGfxRingContextRCS memcpy (leaves DW1=0x00ffffff).
+			 // Writes Gen12 ring context MI_LRI block so ExecList context-restore works on RPL.
+			 {"__ZN17IGHardwareContext15initWithOptionsEP11IGAccelTaskRK23IGHardwareContextParamsh", IGHardwareContextinitWithOptions, this->oIGHardwareContextinitWithOptions},
 
 			 // V144: Hook IGHardwareExtendedContext::initWithOptions so it actually runs with
 			 // the resolved Blit3DExtendedCtxParams. Without this, oIGHardwareExtendedContextinitWithOptions
@@ -5709,6 +5713,99 @@ void *  Gen11::IGHardwareBlit3DContextoperatornew(unsigned long size)
 		return nullptr;
 	}
 	auto ret = FunctionCast(IGHardwareBlit3DContextoperatornew, callback->oIGHardwareBlit3DContextoperatornew)(size);
+	return ret;
+}
+
+// V509: Hook IGHardwareContext::initWithOptions (base class) — CPU-side LRCA page1 repair.
+// Apple's initWithOptions calls restoreFromSafeImage() before copying g_cInitGfxRingContextRCS.
+// On RPL that call returns true (skips the memcpy), leaving MI_LRI headers at DW1/DW8 as
+// 0x00ffffff GEM-fill.  Hardware sees 0x00ffffff=MI_NOOP at DW1, skips register restore entirely,
+// ring state is undefined, context posts IDLE immediately → startGraphicsEngine ret=3022544385.
+//
+// Fix: after original returns, if DW1 is still 0x00ffffff (only for RCS, this[0x6c]==0), write
+// the minimal Gen12 ring context MI_LRI block via aperture (BAR2 remap of GGTT page1 PTE).
+// LRCA GPU VA is in this+0x89 (set by initWithOptions on success path per Ghidra decompile).
+// RING_START and RING_CTL are read from live MMIO so they match what Apple's ring-setup wrote.
+uint64_t Gen11::IGHardwareContextinitWithOptions(void *that, void *task, const void *params, uint8_t arg)
+{
+	uint64_t ret = FunctionCast(IGHardwareContextinitWithOptions,
+	                             callback->oIGHardwareContextinitWithOptions)(that, task, params, arg);
+	auto *cb = NGreen::callback;
+	if (cb->isRealTGL || !ret) return ret;
+
+	uint8_t engType = getMember<uint8_t>(that, 0x6c);
+	if (engType != 0) return ret;  // only repair RCS (case 0)
+
+	// LRCA GPU VA is stored at this+0x89 (4-byte field, written by initWithOptions success path).
+	// Bits [31:12] = 4K-aligned GPU physical address of LRCA page0.  Page1 = page0 + 0x1000.
+	uint32_t lrcaGpuVa = getMember<uint32_t>(that, 0x89) & 0xFFFFF000;
+	if (!lrcaGpuVa) {
+		SYSLOG("ngreen", "V509: LRCA GPU VA zero, skipping repair");
+		return ret;
+	}
+	uint32_t page1Idx = (lrcaGpuVa >> 12) + 1;
+
+	// Flush CPU caches so aperture (UC) sees true DRAM content written by initWithOptions.
+	asm volatile("wbinvd" ::: "memory");
+	cb->setApertureIfNecessary();
+	uint32_t p1Lo = cb->readReg32(GGTT_PTE_LO(page1Idx));
+	uint32_t p1Hi = cb->readReg32(GGTT_PTE_HI(page1Idx));
+	if (!(p1Lo & 1) || !cb->aperturePtr || cb->apertureLen < 0x1000) {
+		SYSLOG("ngreen", "V509: LRCA page1 PTE not present (idx=%u lo=%08x), skipping", page1Idx, p1Lo);
+		return ret;
+	}
+
+	volatile uint32_t *ap = cb->aperturePtr;
+	uint32_t saveLo = cb->readReg32(GGTT_PTE_LO(0));
+	uint32_t saveHi = cb->readReg32(GGTT_PTE_HI(0));
+	cb->writeReg32(GGTT_PTE_LO(0), p1Lo);
+	cb->writeReg32(GGTT_PTE_HI(0), p1Hi);
+	cb->writeReg32(0x101008, 0x1);
+
+	if (ap[1] != 0x00ffffff) {
+		// Already has a valid LRI header — restoreFromSafeImage gave us a good image.
+		SYSLOG("ngreen", "V509: DW1=%08x (valid), no repair needed", (uint32_t)ap[1]);
+	} else {
+		// Read ring setup from live MMIO — Apple's ring-setup code runs before context creation.
+		uint32_t rcsStart = cb->readReg32(0x2038);   // RCS RING_START
+		uint32_t rcsCtl   = cb->readReg32(0x2040);   // RCS RING_CTL (bit0=0 when stopped)
+		if (!rcsStart) rcsStart = 0x402eb000;         // fallback from HANGCHECK
+
+		SYSLOG("ngreen", "V509: repairing LRCA page1 lrcaGpuVa=%08x RING_START=%08x RING_CTL=%08x",
+		       lrcaGpuVa, rcsStart, rcsCtl);
+
+		// Zero DW0-DW79 (replaces 0x00ffffff GEM-fill with MI_NOOPs).
+		for (int i = 0; i < 80; i++) ap[i] = 0;
+
+		// LRI block 0 (DW0-DW7): CTX_CTRL | RING_HEAD | RING_TAIL  — 3 pairs, force-posted.
+		// Gen12 MI_LRI_FORCE_POSTED = bit 12 (confirmed from else-branch header 0x11001003).
+		ap[1]  = 0x11001005;   // MI_LRI(3) | FORCE_POSTED
+		ap[2]  = 0x00002090;   // RING_CONTEXT_CONTROL addr (RCS)
+		ap[3]  = 0xffff0001;   // CTX_CTRL: inhibit sync ctx switch (from initWithOptions decompile)
+		ap[4]  = 0x00002034;   // RING_HEAD addr
+		ap[5]  = 0x00000000;   // RING_HEAD = 0
+		ap[6]  = 0x00002030;   // RING_TAIL addr
+		ap[7]  = 0x00000000;   // RING_TAIL = 0
+
+		// LRI block 1 (DW8-DW12): RING_START | RING_CTL  — 2 pairs, force-posted.
+		ap[8]  = 0x11001003;   // MI_LRI(2) | FORCE_POSTED
+		ap[9]  = 0x00002038;   // RING_START addr
+		ap[10] = rcsStart;     // RING_START value (from live MMIO)
+		ap[11] = 0x00002040;   // RING_CTL addr
+		ap[12] = rcsCtl | 1;   // RING_CTL | RING_VALID
+
+		// Apple context-image valid marker at DW80 (from initWithOptions decompile:
+		// *(pSVar10 + 0x1140) = 0x5000001, where 0x1140 - 0x1000 = 0x140 = 80*4).
+		ap[80] = 0x05000001;
+
+		asm volatile("sfence" ::: "memory");
+		SYSLOG("ngreen", "V509: repair done DW1=%08x DW10(RING_START)=%08x DW12(CTL)=%08x",
+		       (uint32_t)ap[1], rcsStart, rcsCtl | 1);
+	}
+
+	cb->writeReg32(GGTT_PTE_LO(0), saveLo);
+	cb->writeReg32(GGTT_PTE_HI(0), saveHi);
+	cb->writeReg32(0x101008, 0x1);
 	return ret;
 }
 
