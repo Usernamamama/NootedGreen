@@ -1822,6 +1822,11 @@ private:
 	static void blit3d_initialize_scratch_space(void *that);
 	mach_vm_address_t oblit3d_initialize_scratch_space {};
 
+	// V508: Base class IGHardwareContext::withOptions hook — logs ctx+0xb8 and dumps LRCA page1
+	// immediately after initWithOptions runs (wbinvd flushes LLC→DRAM for accurate aperture read).
+	static void *IGHardwareContextwithOptions(void *task, const void *params, uint8_t arg);
+	mach_vm_address_t oIGHardwareContextwithOptions {};
+
 	// Extended GPU context init — sets up additional context state (PPGTT, aux tables)
 	static uint64_t IGHardwareExtendedContextinitWithOptions
 			  (void *that,void *param_1,

@@ -1075,6 +1075,11 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 			 // is always null → alloc always returns nullptr → ctx=0 forever → NULL-task submitBlit
 			 // flood → BCS ring WAIT_ON_SCANLINE stall.
 			 {"__ZN23IGHardwareBlit3DContextnwEm", IGHardwareBlit3DContextoperatornew, this->oIGHardwareBlit3DContextoperatornew},
+			 // V508: Hook base-class IGHardwareContext::withOptions to inspect ctx+0xb8 (FIFO
+			 // channel / ring buffer allocation) and dump LRCA page1 via wbinvd+aperture right
+			 // after initWithOptions writes it — determines if RING_START=0 is real or LLC artifact.
+			 {"__ZN17IGHardwareContext11withOptionsEP11IGAccelTaskRK23IGHardwareContextParamsh", IGHardwareContextwithOptions, this->oIGHardwareContextwithOptions},
+
 			 // V144: Hook IGHardwareExtendedContext::initWithOptions so it actually runs with
 			 // the resolved Blit3DExtendedCtxParams. Without this, oIGHardwareExtendedContextinitWithOptions
 			 // is null → init returns 0 → ctx+0xb8 stays NULL → submitBlit+0x28e crash.
@@ -5705,6 +5710,56 @@ void *  Gen11::IGHardwareBlit3DContextoperatornew(unsigned long size)
 	}
 	auto ret = FunctionCast(IGHardwareBlit3DContextoperatornew, callback->oIGHardwareBlit3DContextoperatornew)(size);
 	return ret;
+}
+
+// V508: Hook IGHardwareContext::withOptions (base class factory) to capture LRCA page1 content
+// immediately after initWithOptions runs.  wbinvd flushes all LLC lines to DRAM so the aperture
+// read reflects what initWithOptions actually wrote — not stale zero-initialized DRAM.
+// Also logs ctx+0xb8 (IGAccelFIFOChannel) and its first several fields to confirm the ring
+// buffer was allocated.
+void *Gen11::IGHardwareContextwithOptions(void *task, const void *params, uint8_t arg)
+{
+	void *ctx = FunctionCast(IGHardwareContextwithOptions,
+	                         callback->oIGHardwareContextwithOptions)(task, params, arg);
+	auto *cb = NGreen::callback;
+	static int v508Count = 0;
+	if (!cb->isRealTGL && ctx && v508Count < 4) {
+		v508Count++;
+		void *fifo = getMember<void *>(ctx, 0xb8);
+		SYSLOG("ngreen", "V508[%d]: IGHWCtx::withOptions ctx=%p b8(fifo)=%p task=%p arg=%u",
+		       v508Count, ctx, fifo, task, (unsigned)arg);
+		if (fifo) {
+			// Dump first 8 qwords of the FIFO channel to locate the ring buffer GGTT start
+			for (int i = 0; i < 8; i++) {
+				uint64_t v = getMember<uint64_t>(fifo, i * 8);
+				SYSLOG("ngreen", "V508[%d]: fifo[0x%02x]=0x%016llx", v508Count, i*8, (unsigned long long)v);
+			}
+		}
+		// Flush all CPU caches to DRAM so the aperture (BAR2, UC) sees what initWithOptions wrote.
+		asm volatile("wbinvd" ::: "memory");
+		// LRCA is consistently at ggtt=0x18000 (page index 0x18, page1 = 0x19).
+		cb->setApertureIfNecessary();
+		uint32_t p1Lo = cb->readReg32(GGTT_PTE_LO(0x19));
+		uint32_t p1Hi = cb->readReg32(GGTT_PTE_HI(0x19));
+		SYSLOG("ngreen", "V508[%d]: LRCA pg1 PTE=%08x:%08x present=%d (after wbinvd)",
+		       v508Count, p1Hi, p1Lo, p1Lo & 1);
+		if (cb->aperturePtr && cb->apertureLen >= 0x1000 && (p1Lo & 1)) {
+			volatile uint32_t *ap = cb->aperturePtr;
+			uint32_t saveLo = cb->readReg32(GGTT_PTE_LO(0));
+			uint32_t saveHi = cb->readReg32(GGTT_PTE_HI(0));
+			cb->writeReg32(GGTT_PTE_LO(0), p1Lo);
+			cb->writeReg32(GGTT_PTE_HI(0), p1Hi);
+			cb->writeReg32(0x101008, 0x1);
+			SYSLOG("ngreen", "V508[%d]: LRCA page1 DW0..31 (post-wbinvd, post-initWithOptions):", v508Count);
+			for (int i = 0; i < 8; i++)
+				SYSLOG("ngreen", "V508[%d]: LRCA+1K[%02d-%02d] %08x %08x %08x %08x",
+				       v508Count, i*4, i*4+3, ap[i*4], ap[i*4+1], ap[i*4+2], ap[i*4+3]);
+			cb->writeReg32(GGTT_PTE_LO(0), saveLo);
+			cb->writeReg32(GGTT_PTE_HI(0), saveHi);
+			cb->writeReg32(0x101008, 0x1);
+		}
+	}
+	return ctx;
 }
 
 uint64_t Gen11::IGHardwareExtendedContextinitWithOptions(void *that,void *param_1,void *param_2)
