@@ -300,6 +300,10 @@ private:
 	volatile UInt32 *aperturePtr {nullptr};
 	uint64_t apertureLen {0};
 
+	// Last RCS context object seen by IGHardwareContext::withOptions.
+	// V507 uses this to re-run the LRCA slot repair on each populateResetRegisterList call.
+	void *lastRCSCtx {nullptr};
+
 };
 
 //! Change frame-buffer count >= 2 check to >= 1.

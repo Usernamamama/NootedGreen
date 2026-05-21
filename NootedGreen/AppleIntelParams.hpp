@@ -485,6 +485,8 @@ static_assert(__builtin_offsetof(FlipTransactionArgs, TilingEnum) == 0x3C, "Flip
 static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0040)  == 0x40, "FlipTransactionArgs.unk_0040");
 static_assert(__builtin_offsetof(FlipTransactionArgs, unk_0050)  == 0x50, "FlipTransactionArgs.unk_0050");
 
+//unconsolidated structs.. still needs study..
+
 // ---------------------------------------------------------------------------
 // Accelerator / 3D-path structs
 // Discovered by tools/extract_apple_params.py PCode analysis of the

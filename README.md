@@ -30,6 +30,25 @@ Patches Apple's Tiger Lake (Gen12) graphics drivers to work with newer Intel iGP
 - **Execlist cleanup in progress (V158):** Root cause of remaining `userspace watchdog timeout` panics is identified — `EXEC=0x40018098` (execlist FIFO stalled, bit 30 set) and `CSB=0x1001` (15 unread context-status entries) persist post-fake-success, causing Apple's driver to keep scheduling resets. V158 addresses this by writing four null descriptors to `RING_ELSP` (cancelling pending EL0/EL1 contexts) and advancing the CSB read pointer to match the write pointer on every V153/V154 return-0 path.
 - **V80L root cause identified:** The `userspace watchdog timeout` KP (T+120s, 2 induced WS crashes) was traced to the V80L plane-linearization block inside `v71EmrEnforcer`. It was writing `PLANE_CTL` / `PLANE_STRIDE` / `PLANE_SURF` every 50ms while WindowServer was actively compositing those same registers — WS detected a render failure, crash-looped, and watchdogd fired. V80L is now limited to the first 3 enforcer ticks (≤150ms after `start()`), which preserves the visible brief display flash at early boot without fighting WS after it takes over the compositor. Use `-ngreenv80l` for continuous mode (testing only).
 
+### Current Active Investigation — ExecList LRCA page1 repair
+
+**Root cause:** `IGHardwareContext::restoreFromSafeImage` returns `true` on RPL and skips the `g_cInitGfxRingContextRCS` memcpy that would normally write a valid Gen12 ring-context LRI (MI_LRI header + RING_HEAD/TAIL/START/CTL register pairs) into LRCA page1. The LRCA page1 at GGTT[0x19] (the ExecList submission slot hardware reads on context-restore) is left at GEM fill (`0x00ffffff` for arg=2 contexts, `0x00bfbfbf` for arg=0 contexts). Hardware cannot parse the ring registers → context submits but immediately idles without going ACTIVE → `fwWaitForHardwareRegisterValue` times out (15 polls) → HANGCHECK → retry loop.
+
+**Fix (V508/V509):**
+- `IGHardwareContext::withOptions` post-hook (V508) saves the ctx pointer to `cb->lastRCSCtx` and copies LRCA page1 from the actual context buffer (GGTT[`ctxPage1Idx`] — which `restoreFromSafeImage` does write correctly) to the submission slot (GGTT[0x19]). No hardcoded ring values; the copy uses exactly what Apple wrote.
+- `IGHardwareContext::initWithOptions` post-hook (V509) logs for diagnostics — confirms the context buffer is valid (`DW1=11001015`/`11081019`) right after init.
+- `populateResetRegisterList` post-hook (V507) re-runs the copy on every engine reset cycle using `cb->lastRCSCtx`. The display retry loop reuses an existing context without calling `withOptions` again, so V508 never fires after initial context creation; V507 covers all subsequent submission attempts.
+
+**Validity check:** `(ap[1] & 0x1F801000) != 0x11001000` — catches both fill patterns and any other non-LRI value. Passes `0x11001005` and `0x11081019` (the two real headers seen from Apple's context images, which differ by LRI count field for different context types).
+
+**Status confirmed from logs:**
+- V508[1]: slot `00ffffff` → copied from ctx buffer → `DW1=11001015` ✓
+- V508[4] (arg=0): slot `00bfbfbf` → copied → `DW1=11081019`, persists in all subsequent V508 calls ✓
+- Accelerator starts: V45 `getState()=0x1e` (reg=1 match=1 pub=1), Metal/GL/VA plugins loaded ✓
+- V507 re-repair now fires on every `populateResetRegisterList` return to cover the display retry loop
+
+**Remaining blocker:** Preamble ring (16 DWs, two PIPE_CONTROLs) executes (`HEAD=TAIL=0x40`), but stamp write (`value=2` to GPU address `0x40001200` = GGTT[0x40001]+0x200) may not land — GGTT[0x40001] PTE not yet verified. If unmapped, `fwWaitForHardwareRegisterValue` polls forever. Next step: add GGTT[0x40001] PTE + content dump to HANGCHECK.
+
 ### Recent Progress
 
 - **fRegCache/fWriteAccessor boot hang root cause identified and fixed:** `AppleIntelPlane::fRegCache` is at **+0x88** (verified via disasm) — it holds an `AppleIntelPlaneRegCache *` that Apple's code dereferences for vtable DSB accessor dispatch. Writing `ccont` to `fRegCache` causes an immediate hang because `ccont` is the wrong object type (vtable mismatch on DSB method dispatch). The correct ccont slot is `fWriteAccessor` at **+0x90**. All three plane ccont-init hooks in V204 now use `getMember<void *>(that, 0x90) = ccont` instead of `that->fRegCache = …`, leaving Apple's real `fRegCache` pointer untouched. `AppleIntelPlane` struct fully verified: `fEnabled`=+0x84 (byte), `fRegCache`=+0x88, `fWriteAccessor`=+0x90, inline shadows `PLANE_CTL`=+0x100, `PLANE_STRIDE`=+0x104, `PLANE_COLOR_CTL`=+0x154 (all confirmed from disasm).

@@ -5067,6 +5067,54 @@ void Gen11::populateResetRegisterList(void *that)
 		SYSLOG("ngreen", "V507: post-resetRegList RING_MODE 0x%08x → readback 0x%08x (GFX_RUN_LIST_ENABLE=%d)",
 			rmPre, rmPost, !!(rmPost & (1u << 15)));
 	}
+
+	// V507 LRCA repair: re-copy the ring-LRI from the saved RCS context buffer to the
+	// ExecList submission slot (GGTT[0x19]) after every populateResetRegisterList.
+	// The display retry loop reuses the same context without calling withOptions again,
+	// so the slot gets wiped by stopGraphicsEngine and never repaired by V508.
+	auto *cb = NGreen::callback;
+	void *ctx = cb->lastRCSCtx;
+	if (!cb->isRealTGL && ctx) {
+		uint32_t lrcaGpuVa = getMember<uint32_t>(ctx, 0x89) & 0xFFFFF000;
+		if (lrcaGpuVa) {
+			uint32_t ctxPage1Idx = (lrcaGpuVa >> 12) + 1;
+			cb->setApertureIfNecessary();
+			if (cb->aperturePtr && cb->apertureLen >= 0x1000) {
+				uint32_t slotLo = cb->readReg32(GGTT_PTE_LO(0x19));
+				uint32_t slotHi = cb->readReg32(GGTT_PTE_HI(0x19));
+				uint32_t ctxLo  = cb->readReg32(GGTT_PTE_LO(ctxPage1Idx));
+				uint32_t ctxHi  = cb->readReg32(GGTT_PTE_HI(ctxPage1Idx));
+				if ((slotLo & 1) && (ctxLo & 1)) {
+					asm volatile("wbinvd" ::: "memory");
+					volatile uint32_t *ap = cb->aperturePtr;
+					uint32_t saveLo = cb->readReg32(GGTT_PTE_LO(0));
+					uint32_t saveHi = cb->readReg32(GGTT_PTE_HI(0));
+
+					uint32_t buf[96];
+					cb->writeReg32(GGTT_PTE_LO(0), ctxLo);
+					cb->writeReg32(GGTT_PTE_HI(0), ctxHi);
+					cb->writeReg32(0x101008, 0x1);
+					for (int i = 0; i < 96; i++) buf[i] = ap[i];
+
+					cb->writeReg32(GGTT_PTE_LO(0), slotLo);
+					cb->writeReg32(GGTT_PTE_HI(0), slotHi);
+					cb->writeReg32(0x101008, 0x1);
+
+					if ((ap[1] & 0x1F801000) != 0x11001000 &&
+					    (buf[1] & 0x1F801000) == 0x11001000) {
+						for (int i = 0; i < 96; i++) ap[i] = buf[i];
+						asm volatile("sfence" ::: "memory");
+						SYSLOG("ngreen", "V507: LRCA re-repair slot←ctx DW1=%08x",
+						       buf[1]);
+					}
+
+					cb->writeReg32(GGTT_PTE_LO(0), saveLo);
+					cb->writeReg32(GGTT_PTE_HI(0), saveHi);
+					cb->writeReg32(0x101008, 0x1);
+				}
+			}
+		}
+	}
 }
 
 void *Gen11::createUserGPUTask(void *that)
@@ -5852,7 +5900,10 @@ void *Gen11::IGHardwareContextwithOptions(void *task, const void *params, uint8_
 	// context-restore. It starts as GEM fill (0x00ffffff / 0x00bfbfbf) because Apple never
 	// copies the valid LRI block that restoreFromSafeImage wrote into the actual context
 	// buffer (GGTT[ctxPage1Idx]).  Fix: read context buffer → copy to submission slot.
+	// Also save the ctx pointer so V507 can re-run the repair on every populateResetRegisterList
+	// call (the display retry loop reuses the same context without calling withOptions again).
 	if (engType != 0) return ctx;
+	cb->lastRCSCtx = ctx;
 
 	uint32_t lrcaGpuVa = getMember<uint32_t>(ctx, 0x89) & 0xFFFFF000;
 	if (!lrcaGpuVa) { SYSLOG("ngreen", "V509: LRCA GPU VA zero"); return ctx; }
@@ -8625,6 +8676,55 @@ void Gen11::forceWake(void *that, bool set, uint32_t dom, uint8_t ctx) {
 						(unsigned long long)NGreen::callback->apertureLen,
 						p0Lo & 1, p1Lo & 1);
 				}
+			}
+		}
+
+		// V206: Dump preamble stamp target pages (GPU addr 0x40000000 / 0x40001200).
+		// PC1 writes 0 → GGTT[0x40000]+0, PC2 writes stamp value 2 → GGTT[0x40001]+0x200.
+		// If either PTE is invalid the PIPE_CONTROL write silently drops and
+		// fwWaitForHardwareRegisterValue polls forever.
+		{
+			NGreen::callback->setApertureIfNecessary();
+			auto *apcb = NGreen::callback;
+			if (apcb->aperturePtr && apcb->apertureLen >= 0x1000) {
+				volatile uint32_t *ap = apcb->aperturePtr;
+				uint32_t saveLo = apcb->readReg32(GGTT_PTE_LO(0));
+				uint32_t saveHi = apcb->readReg32(GGTT_PTE_HI(0));
+
+				// PC1 clear target: GGTT[0x40000]
+				uint32_t pc1Lo = apcb->readReg32(GGTT_PTE_LO(0x40000));
+				uint32_t pc1Hi = apcb->readReg32(GGTT_PTE_HI(0x40000));
+				SYSLOG("ngreen", "HANGCHECK V206: stamp PC1 GGTT[0x40000] PTE=%08x:%08x present=%d llc=%d",
+					pc1Hi, pc1Lo, pc1Lo & 1, (pc1Lo >> 3) & 1);
+				if (pc1Lo & 1) {
+					asm volatile("wbinvd" ::: "memory");
+					apcb->writeReg32(GGTT_PTE_LO(0), pc1Lo);
+					apcb->writeReg32(GGTT_PTE_HI(0), pc1Hi);
+					apcb->writeReg32(0x101008, 0x1);
+					SYSLOG("ngreen", "HANGCHECK V206: GGTT[0x40000] DW[0..3]=%08x %08x %08x %08x",
+						ap[0], ap[1], ap[2], ap[3]);
+				}
+
+				// PC2 stamp target: GGTT[0x40001] + 0x200 = DW[0x80]
+				uint32_t pc2Lo = apcb->readReg32(GGTT_PTE_LO(0x40001));
+				uint32_t pc2Hi = apcb->readReg32(GGTT_PTE_HI(0x40001));
+				SYSLOG("ngreen", "HANGCHECK V206: stamp PC2 GGTT[0x40001] PTE=%08x:%08x present=%d llc=%d",
+					pc2Hi, pc2Lo, pc2Lo & 1, (pc2Lo >> 3) & 1);
+				if (pc2Lo & 1) {
+					asm volatile("wbinvd" ::: "memory");
+					apcb->writeReg32(GGTT_PTE_LO(0), pc2Lo);
+					apcb->writeReg32(GGTT_PTE_HI(0), pc2Hi);
+					apcb->writeReg32(0x101008, 0x1);
+					// DW[0x80] = offset 0x200 = the stamp value written by PC2
+					SYSLOG("ngreen", "HANGCHECK V206: GGTT[0x40001] DW[0x7e..0x81]=%08x %08x %08x %08x (stamp@DW[0x80]=%08x)",
+						ap[0x7e], ap[0x7f], ap[0x80], ap[0x81], ap[0x80]);
+				}
+
+				apcb->writeReg32(GGTT_PTE_LO(0), saveLo);
+				apcb->writeReg32(GGTT_PTE_HI(0), saveHi);
+				apcb->writeReg32(0x101008, 0x1);
+			} else {
+				SYSLOG("ngreen", "HANGCHECK V206: aperture unavailable — skipping stamp target dump");
 			}
 		}
 
