@@ -4217,6 +4217,18 @@ unsigned long Gen11::start(void *that,void  *param_1)
 		SYSLOG("ngreen", "V65: Post-start interrupt fix: RC_INTR_EN 0x%x->0x%x, RCS_MASK 0x%x->0x%x, ERR=0x%x",
 			rcIntrPost, NGreen::callback->readReg32(GEN11_RENDER_COPY_INTR_ENABLE),
 			rcsMaskPost, NGreen::callback->readReg32(GEN11_RCS0_RSVD_INTR_MASK), errPost);
+		// V507: GFX_RUN_LIST_ENABLE must be set in the live RING_MODE register before any
+		// ExecList submission — Apple's init does not set it on RPL-P (snapshots 0x0 into
+		// the MI_LRI replay list, leaving ExecList mode off permanently).
+		// RING_MODE uses the Intel masked-write convention: hi16=write-enable mask, lo16=values.
+		// Writing 0x80008000 sets bit15 (GFX_RUN_LIST_ENABLE) without touching other bits.
+		{
+			uint32_t rmPre = NGreen::callback->readReg32(RING_MODE(RENDER_RING_BASE));
+			NGreen::callback->writeReg32(RING_MODE(RENDER_RING_BASE), 0x80008000u);
+			uint32_t rmPost = NGreen::callback->readReg32(RING_MODE(RENDER_RING_BASE));
+			SYSLOG("ngreen", "V507: RING_MODE 0x%08x → 0x80008000 → readback 0x%08x (GFX_RUN_LIST_ENABLE=%d)",
+				rmPre, rmPost, !!(rmPost & (1u << 15)));
+		}
 	}
 	
 	// ── V29: Post-start diagnostics ──
@@ -4968,6 +4980,7 @@ void Gen11::populateResetRegisterList(void *that)
 			(GEN9_FFSC_PERCTX_PREEMPT_CTRL << 16) | 0);
 		SYSLOG("ngreen", "V164: pre-snapshot clear FF_SLICE_CS_CHICKEN1=0x%08x",
 			NGreen::callback->readReg32(GEN7_FF_SLICE_CS_CHICKEN1));
+
 	}
 	FunctionCast(populateResetRegisterList, callback->opopulateResetRegisterList)(that);
 
@@ -5035,6 +5048,15 @@ void Gen11::populateResetRegisterList(void *that)
 					v504CallCount, old, entry[1]);
 			}
 		}
+	}
+	// V507: Re-arm GFX_RUN_LIST_ENABLE in the live register after each reset/recovery attempt.
+	// Apple's recovery may clear RING_MODE; ensure ExecList mode stays on before context re-submit.
+	{
+		uint32_t rmPre = NGreen::callback->readReg32(RING_MODE(RENDER_RING_BASE));
+		NGreen::callback->writeReg32(RING_MODE(RENDER_RING_BASE), 0x80008000u);
+		uint32_t rmPost = NGreen::callback->readReg32(RING_MODE(RENDER_RING_BASE));
+		SYSLOG("ngreen", "V507: post-resetRegList RING_MODE 0x%08x → readback 0x%08x (GFX_RUN_LIST_ENABLE=%d)",
+			rmPre, rmPost, !!(rmPost & (1u << 15)));
 	}
 }
 
@@ -8318,12 +8340,36 @@ void Gen11::forceWake(void *that, bool set, uint32_t dom, uint8_t ctx) {
 			}
 			{
 				uint32_t rStart = NGreen::callback->readReg32(RING_START(RENDER_RING_BASE));
+				uint32_t rHead  = NGreen::callback->readReg32(RING_HEAD(RENDER_RING_BASE));
 				if (rStart) {
 					uint32_t rPg  = rStart >> 12;
 					uint32_t rPLo = NGreen::callback->readReg32(GGTT_PTE_LO(rPg));
 					uint32_t rPHi = NGreen::callback->readReg32(GGTT_PTE_HI(rPg));
 					SYSLOG("ngreen", "HANGCHECK V204: RING_START PTE[page 0x%x]=%08x:%08x present=%d llc=%d",
 						rPg, rPHi, rPLo, rPLo & 1, (rPLo >> 3) & 1);
+					// Dump the preamble ring: HEAD bytes already executed — these are the
+					// exact commands Apple submitted. IPEHR=last command pipelined.
+					NGreen::callback->setApertureIfNecessary();
+					if (NGreen::callback->aperturePtr && NGreen::callback->apertureLen >= 0x2000 && (rPLo & 1)) {
+						volatile uint32_t *ap = NGreen::callback->aperturePtr;
+						uint32_t saveLo = NGreen::callback->readReg32(GGTT_PTE_LO(0));
+						uint32_t saveHi = NGreen::callback->readReg32(GGTT_PTE_HI(0));
+						NGreen::callback->writeReg32(GGTT_PTE_LO(0), rPLo);
+						NGreen::callback->writeReg32(GGTT_PTE_HI(0), rPHi);
+						NGreen::callback->writeReg32(0x101008, 0x1);
+						uint32_t dumpDW = (rHead + 0x3F) / 4;  // round HEAD up to nearest 16 DW
+						if (dumpDW < 16) dumpDW = 16;
+						if (dumpDW > 64) dumpDW = 64;
+						SYSLOG("ngreen", "HANGCHECK V204: preamble ring [0..0x%x] (HEAD=0x%x IPEHR=0x%x):",
+							dumpDW*4 - 1, rHead,
+							NGreen::callback->readReg32(RING_IPEHR(RENDER_RING_BASE)));
+						for (uint32_t i = 0; i < dumpDW; i += 4)
+							SYSLOG("ngreen", "HANGCHECK V204: ring[%02d-%02d] +0x%02x: %08x %08x %08x %08x",
+								i, i+3, i*4, ap[i], ap[i+1], ap[i+2], ap[i+3]);
+						NGreen::callback->writeReg32(GGTT_PTE_LO(0), saveLo);
+						NGreen::callback->writeReg32(GGTT_PTE_HI(0), saveHi);
+						NGreen::callback->writeReg32(0x101008, 0x1);
+					}
 				}
 			}
 			// V205: Dump LRCA via aperture remap — no IOMappedRead32, no PTE range issue.
