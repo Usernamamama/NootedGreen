@@ -1827,6 +1827,13 @@ private:
 	static void *IGHardwareContextwithOptions(void *task, const void *params, uint8_t arg);
 	mach_vm_address_t oIGHardwareContextwithOptions {};
 
+	// V509: Base class IGHardwareContext::initWithOptions hook — CPU-side LRCA page1 repair.
+	// restoreFromSafeImage returns true on RPL (skips g_cInitGfxRingContextRCS memcpy), leaving
+	// DW1 (MI_LRI header) as 0x00ffffff.  We write the minimal Gen12 ring context LRI block so
+	// hardware can restore ring state on ExecList context-restore.
+	static uint64_t IGHardwareContextinitWithOptions(void *that, void *task, const void *params, uint8_t arg);
+	mach_vm_address_t oIGHardwareContextinitWithOptions {};
+
 	// Extended GPU context init — sets up additional context state (PPGTT, aux tables)
 	static uint64_t IGHardwareExtendedContextinitWithOptions
 			  (void *that,void *param_1,
