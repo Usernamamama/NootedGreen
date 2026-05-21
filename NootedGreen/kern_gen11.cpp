@@ -5729,10 +5729,20 @@ void *Gen11::IGHardwareContextwithOptions(void *task, const void *params, uint8_
 		SYSLOG("ngreen", "V508[%d]: IGHWCtx::withOptions ctx=%p b8(fifo)=%p task=%p arg=%u",
 		       v508Count, ctx, fifo, task, (unsigned)arg);
 		if (fifo) {
-			// Dump first 8 qwords of the FIFO channel to locate the ring buffer GGTT start
-			for (int i = 0; i < 8; i++) {
+			// Dump first 12 qwords of the FIFO channel to locate the ring buffer GGTT start
+			for (int i = 0; i < 12; i++) {
 				uint64_t v = getMember<uint64_t>(fifo, i * 8);
 				SYSLOG("ngreen", "V508[%d]: fifo[0x%02x]=0x%016llx", v508Count, i*8, (unsigned long long)v);
+			}
+			// fifo[0x18] = IGHardwareRingBuffer* — dump its first 20 qwords to find ring GGTT base.
+			// Ring GGTT is needed for V509 LRCA page1 repair (RING_START value).
+			void *ringBuf = getMember<void *>(fifo, 0x18);
+			if (ringBuf && v508Count == 1) {
+				SYSLOG("ngreen", "V508[%d]: ring_buf=%p fields:", v508Count, ringBuf);
+				for (int i = 0; i < 20; i++) {
+					uint64_t v = getMember<uint64_t>(ringBuf, i * 8);
+					SYSLOG("ngreen", "V508[%d]:   rb[0x%03x]=0x%016llx", v508Count, i*8, (unsigned long long)v);
+				}
 			}
 		}
 		// Flush all CPU caches to DRAM so the aperture (BAR2, UC) sees what initWithOptions wrote.
