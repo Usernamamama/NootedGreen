@@ -1037,6 +1037,14 @@ bool Gen11::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 		 	{"__ZN16IntelAccelerator19startGraphicsEngineEv", startGraphicsEngine, this->ostartGraphicsEngine},
 			{"__ZN16IntelAccelerator18stopGraphicsEngineEv",  stopGraphicsEngine,  this->ostopGraphicsEngine},
 
+			// V212: Hook IGScheduler{4,5}::isGpuIdle — the bool watchdog query called post-startup.
+			// startGraphicsEngine SUCCEEDS (returns non-zero = success path in decomp). But the GPU
+			// watchdog polls isGpuIdle() after init; INSTDONE bit0 stuck at 0 makes it return false
+			// → watchdog declares GPU hung → resets → startGraphicsEngine retry loop forever.
+			// Fix: when INSTDONE == 0xfffffffe (RPL-P idle with stuck bit0), return true.
+			{"__ZNK12IGScheduler59isGpuIdleEv", wrapIGScheduler5IsGpuIdle, this->oIGScheduler5IsGpuIdle},
+			{"__ZNK12IGScheduler49isGpuIdleEv", wrapIGScheduler4IsGpuIdle, this->oIGScheduler4IsGpuIdle},
+
 			// V164: Hook populateResetRegisterList which reads live MMIO values into the per-context
 			// replay list (a batch of MI_LRI commands executed before every context switch).
 			// startGraphicsEngine enables PERCTX_PREEMPT_CTRL then calls populateResetRegisterList,
@@ -9702,7 +9710,35 @@ void Gen11::IGScheduler5resume(void *that) {
 		}
 	
 	FunctionCast(IGScheduler5resume, callback->oIGScheduler5resume)(that);
-	
+
+}
+
+// V212: The GPU watchdog calls isGpuIdle() after engine init to decide if the GPU is healthy.
+// On RPL-P, INSTDONE bit0 is permanently 0 → original returns false → watchdog resets the GPU
+// → startGraphicsEngine retry loop. startGraphicsEngine itself SUCCEEDS (return value is non-zero
+// = success path); the reset is triggered entirely by this watchdog query.
+bool Gen11::wrapIGScheduler5IsGpuIdle(const void *that) {
+	bool idle = FunctionCast(wrapIGScheduler5IsGpuIdle, callback->oIGScheduler5IsGpuIdle)(that);
+	if (!idle) {
+		uint32_t instdone = NGreen::callback->readReg32(RING_INSTDONE(RENDER_RING_BASE));
+		if ((instdone & ~1U) == 0xfffffffe) {
+			SYSLOG("ngreen", "V212[5]: isGpuIdle override INSTDONE=0x%08x → idle", instdone);
+			return true;
+		}
+	}
+	return idle;
+}
+
+bool Gen11::wrapIGScheduler4IsGpuIdle(const void *that) {
+	bool idle = FunctionCast(wrapIGScheduler4IsGpuIdle, callback->oIGScheduler4IsGpuIdle)(that);
+	if (!idle) {
+		uint32_t instdone = NGreen::callback->readReg32(RING_INSTDONE(RENDER_RING_BASE));
+		if ((instdone & ~1U) == 0xfffffffe) {
+			SYSLOG("ngreen", "V212[4]: isGpuIdle override INSTDONE=0x%08x → idle", instdone);
+			return true;
+		}
+	}
+	return idle;
 }
 
 typedef enum AGDCVendorClass {
