@@ -1970,6 +1970,14 @@ private:
 	static void  IGScheduler5resume(void *that);  // GPU command scheduler resume
 	mach_vm_address_t oIGScheduler5resume {};
 
+	// V212: Hook isGpuIdle (watchdog query) — GPU watchdog calls this post-startup.
+	// If INSTDONE bit0 stuck (0xfffffffe), it returns false → watchdog declares hang →
+	// GPU reset → startGraphicsEngine retry loop. Fix: return true for RPL-P stuck pattern.
+	static bool wrapIGScheduler5IsGpuIdle(const void *that);
+	mach_vm_address_t oIGScheduler5IsGpuIdle {};
+	static bool wrapIGScheduler4IsGpuIdle(const void *that);
+	mach_vm_address_t oIGScheduler4IsGpuIdle {};
+
 	static uint8_t connectionChanged(void *that);
 	mach_vm_address_t oconnectionChanged {};
 
